@@ -298,3 +298,46 @@ func TestBitbucketProvider_Interface(t *testing.T) {
 	var _ Provider = (*BitbucketProvider)(nil)
 }
 
+func TestBitbucketProvider_getGitEnv_WithCredentials(t *testing.T) {
+	provider := NewBitbucketProviderWithToken("user", "password", "workspace")
+	env := provider.getGitEnv()
+
+	hasUsername := false
+	hasPassword := false
+	for _, e := range env {
+		if e == "BITBUCKET_USERNAME=user" {
+			hasUsername = true
+		}
+		if e == "BITBUCKET_APP_PASSWORD=password" {
+			hasPassword = true
+		}
+	}
+
+	if !hasUsername {
+		t.Error("getGitEnv() should include BITBUCKET_USERNAME")
+	}
+	if !hasPassword {
+		t.Error("getGitEnv() should include BITBUCKET_APP_PASSWORD")
+	}
+}
+
+func TestBitbucketProvider_getGitEnv_WithSSH(t *testing.T) {
+	provider := NewBitbucketProvider("")
+	provider.auth = &AuthOptions{
+		Method: AuthSSH,
+		SSHKey: "/path/to/key",
+	}
+
+	env := provider.getGitEnv()
+
+	hasSSHCommand := false
+	for _, e := range env {
+		if e == "GIT_SSH_COMMAND=ssh -i /path/to/key -o StrictHostKeyChecking=no" {
+			hasSSHCommand = true
+		}
+	}
+
+	if !hasSSHCommand {
+		t.Error("getGitEnv() should include GIT_SSH_COMMAND when using SSH auth")
+	}
+}

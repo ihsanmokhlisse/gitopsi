@@ -209,7 +209,7 @@ func (g *GiteaProvider) CreateRepository(ctx context.Context, opts CreateRepoOpt
 		"-H", fmt.Sprintf("Authorization: token %s", g.token),
 		"-H", "Content-Type: application/json",
 		"-X", "POST",
-		"-d", fmt.Sprintf(`{"name":"%s","description":"%s","private":%s}`, opts.Name, opts.Description, visibility),
+		"-d", fmt.Sprintf(`{"name":%q,"description":%q,"private":%s}`, opts.Name, opts.Description, visibility),
 		apiURL,
 	}
 
@@ -285,7 +285,7 @@ func (g *GiteaProvider) CreateWebhook(ctx context.Context, owner, repo string, o
 
 	events := make([]string, 0, len(opts.Events))
 	for _, e := range opts.Events {
-		events = append(events, fmt.Sprintf(`"%s"`, e))
+		events = append(events, fmt.Sprintf("%q", e))
 	}
 
 	payload := fmt.Sprintf(`{
@@ -381,4 +381,3 @@ func (g *GiteaProvider) GetInstance() string {
 func (g *GiteaProvider) SetInstance(instance string) {
 	g.instance = instance
 }
-

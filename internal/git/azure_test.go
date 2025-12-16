@@ -268,3 +268,39 @@ func TestAzureDevOpsProvider_Interface(t *testing.T) {
 	var _ Provider = (*AzureDevOpsProvider)(nil)
 }
 
+func TestAzureDevOpsProvider_getGitEnv_WithToken(t *testing.T) {
+	provider := NewAzureDevOpsProviderWithToken("test_pat", "org", "proj")
+	env := provider.getGitEnv()
+
+	hasPAT := false
+	for _, e := range env {
+		if e == "AZURE_DEVOPS_PAT=test_pat" {
+			hasPAT = true
+		}
+	}
+
+	if !hasPAT {
+		t.Error("getGitEnv() should include AZURE_DEVOPS_PAT")
+	}
+}
+
+func TestAzureDevOpsProvider_getGitEnv_WithSSH(t *testing.T) {
+	provider := NewAzureDevOpsProvider("", "")
+	provider.auth = &AuthOptions{
+		Method: AuthSSH,
+		SSHKey: "/path/to/key",
+	}
+
+	env := provider.getGitEnv()
+
+	hasSSHCommand := false
+	for _, e := range env {
+		if e == "GIT_SSH_COMMAND=ssh -i /path/to/key -o StrictHostKeyChecking=no" {
+			hasSSHCommand = true
+		}
+	}
+
+	if !hasSSHCommand {
+		t.Error("getGitEnv() should include GIT_SSH_COMMAND when using SSH auth")
+	}
+}

@@ -253,3 +253,39 @@ func TestGiteaProvider_Interface(t *testing.T) {
 	var _ Provider = (*GiteaProvider)(nil)
 }
 
+func TestGiteaProvider_getGitEnv_WithToken(t *testing.T) {
+	provider := NewGiteaProviderWithToken("test_token", "gitea.com")
+	env := provider.getGitEnv()
+
+	hasGiteaToken := false
+	for _, e := range env {
+		if e == "GITEA_TOKEN=test_token" {
+			hasGiteaToken = true
+		}
+	}
+
+	if !hasGiteaToken {
+		t.Error("getGitEnv() should include GITEA_TOKEN")
+	}
+}
+
+func TestGiteaProvider_getGitEnv_WithSSH(t *testing.T) {
+	provider := NewGiteaProvider("")
+	provider.auth = &AuthOptions{
+		Method: AuthSSH,
+		SSHKey: "/path/to/key",
+	}
+
+	env := provider.getGitEnv()
+
+	hasSSHCommand := false
+	for _, e := range env {
+		if e == "GIT_SSH_COMMAND=ssh -i /path/to/key -o StrictHostKeyChecking=no" {
+			hasSSHCommand = true
+		}
+	}
+
+	if !hasSSHCommand {
+		t.Error("getGitEnv() should include GIT_SSH_COMMAND when using SSH auth")
+	}
+}

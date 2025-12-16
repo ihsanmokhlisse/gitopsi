@@ -206,7 +206,7 @@ func (a *AzureDevOpsProvider) CreateRepository(ctx context.Context, opts CreateR
 	apiURL := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories?api-version=7.0", a.organization, a.project)
 	basicAuth := fmt.Sprintf(":%s", a.token)
 
-	payload := fmt.Sprintf(`{"name":"%s"}`, opts.Name)
+	payload := fmt.Sprintf(`{"name":%q}`, opts.Name)
 
 	args := []string{
 		"-s",
@@ -432,4 +432,3 @@ func (a *AzureDevOpsProvider) GetProject() string {
 func (a *AzureDevOpsProvider) SetProject(project string) {
 	a.project = project
 }
-

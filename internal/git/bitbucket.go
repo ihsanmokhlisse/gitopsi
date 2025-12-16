@@ -220,7 +220,7 @@ func (b *BitbucketProvider) CreateRepository(ctx context.Context, opts CreateRep
 	apiURL := fmt.Sprintf("https://api.bitbucket.org/2.0/repositories/%s/%s", b.workspace, opts.Name)
 	basicAuth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", b.username, b.appPassword)))
 
-	payload := fmt.Sprintf(`{"scm":"git","is_private":%s,"description":"%s"}`, isPrivate, opts.Description)
+	payload := fmt.Sprintf(`{"scm":"git","is_private":%s,"description":%q}`, isPrivate, opts.Description)
 
 	args := []string{
 		"-s",
@@ -329,7 +329,7 @@ func (b *BitbucketProvider) CreateWebhook(ctx context.Context, owner, repo strin
 		case "pull_request":
 			events = append(events, `"pullrequest:created"`, `"pullrequest:updated"`)
 		default:
-			events = append(events, fmt.Sprintf(`"%s"`, e))
+			events = append(events, fmt.Sprintf("%q", e))
 		}
 	}
 
@@ -439,4 +439,3 @@ func (b *BitbucketProvider) GetWorkspace() string {
 func (b *BitbucketProvider) SetWorkspace(workspace string) {
 	b.workspace = workspace
 }
-

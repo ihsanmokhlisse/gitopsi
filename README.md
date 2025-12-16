@@ -2,30 +2,31 @@
 
 [![CI](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/ci.yaml/badge.svg)](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/ci.yaml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ihsanmokhlisse/gitopsi)](https://goreportcard.com/report/github.com/ihsanmokhlisse/gitopsi)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A CLI tool for bootstrapping production-ready GitOps repositories.
+**Bootstrap production-ready GitOps repositories in seconds.**
+
+gitopsi generates complete GitOps repository structures with Kubernetes manifests, Kustomize overlays, ArgoCD/Flux configurations, and documentation.
 
 ## Features
 
 - **Multi-Platform**: Kubernetes, OpenShift, AKS, EKS
 - **Multi-Tool**: ArgoCD, Flux, or both
-- **Full Scope**: Infrastructure + Applications
-- **Dual Mode**: Interactive prompts or config file
-- **Production Ready**: Docs, scripts, CI/CD included
+- **Flexible Scope**: Infrastructure, Applications, or both
+- **Interactive & Config**: CLI prompts or YAML config file
+- **Production Ready**: Includes docs, scripts, and CI/CD
 
 ## Installation
 
-```bash
-# From source
-go install github.com/ihsanmokhlisse/gitopsi/cmd/gitopsi@latest
+### Container (Recommended)
 
-# Or build locally
-git clone https://github.com/ihsanmokhlisse/gitopsi.git
-cd gitopsi
-make build
-./bin/gitopsi --help
+```bash
+podman pull ghcr.io/ihsanmokhlisse/gitopsi:latest
+podman run --rm -v $(pwd):/workspace gitopsi init
 ```
+
+### Binary
+
+Download from [Releases](https://github.com/ihsanmokhlisse/gitopsi/releases)
 
 ## Quick Start
 
@@ -41,31 +42,15 @@ gitopsi init
 gitopsi init --config gitops.yaml
 ```
 
-## Usage
-
-```bash
-gitopsi [command] [flags]
-
-Commands:
-  init        Initialize new GitOps repository
-  version     Show version
-
-Flags:
-  --config    Config file path
-  --output    Output directory
-  --dry-run   Preview without writing
-  --verbose   Verbose output
-```
-
-## Configuration Example
+### Example Config
 
 ```yaml
 project:
   name: my-platform
 
-platform: kubernetes    # kubernetes | openshift | aks | eks
-scope: both            # infrastructure | application | both
-gitops_tool: argocd    # argocd | flux | both
+platform: kubernetes
+scope: both
+gitops_tool: argocd
 
 environments:
   - name: dev
@@ -73,8 +58,8 @@ environments:
   - name: prod
 
 applications:
-  - name: frontend
-    image: myregistry/frontend:latest
+  - name: api
+    image: myregistry/api:latest
     port: 8080
 ```
 
@@ -83,42 +68,34 @@ applications:
 ```
 my-platform/
 ├── README.md
-├── Makefile
-├── docs/
 ├── bootstrap/argocd/
 ├── infrastructure/
 │   ├── base/
-│   └── overlays/{env}/
+│   └── overlays/{dev,staging,prod}/
 ├── applications/
 │   ├── base/
-│   └── overlays/{env}/
+│   └── overlays/{dev,staging,prod}/
 ├── argocd/
+│   ├── projects/
 │   └── applicationsets/
 └── scripts/
 ```
 
-## Documentation
-
-- [Contributing Guide](docs/CONTRIBUTING.md)
-- [Changelog](docs/CHANGELOG.md)
-
 ## Development
 
+**⚠️ Testing Rule**: All testing must use Podman Desktop containers.
+
 ```bash
-# Build
-make build
+# Build dev container
+make container-build
 
-# Test
-make test
+# Run tests in container
+make container-test
 
-# Lint
-make lint
+# Interactive shell
+make container-shell
 ```
-
-## Contributing
-
-Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details on our GitFlow workflow and the process for submitting pull requests.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT

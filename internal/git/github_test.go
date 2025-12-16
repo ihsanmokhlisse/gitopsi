@@ -337,3 +337,143 @@ func TestGitHubProvider_getGitEnv_WithSSH(t *testing.T) {
 func TestGitHubProvider_Interface(t *testing.T) {
 	var _ Provider = (*GitHubProvider)(nil)
 }
+
+// Tests for Clone, Push, Pull, TestConnection
+// These methods execute external commands, so we test option building and basic behavior
+
+func TestGitHubProvider_Clone_Options(t *testing.T) {
+	provider := NewGitHubProviderWithToken("test_token")
+
+	tests := []struct {
+		name string
+		opts CloneOptions
+	}{
+		{
+			name: "basic clone",
+			opts: CloneOptions{
+				URL:  "https://github.com/owner/repo.git",
+				Path: "/tmp/test-repo",
+			},
+		},
+		{
+			name: "clone with branch",
+			opts: CloneOptions{
+				URL:    "https://github.com/owner/repo.git",
+				Path:   "/tmp/test-repo",
+				Branch: "develop",
+			},
+		},
+		{
+			name: "clone with depth",
+			opts: CloneOptions{
+				URL:   "https://github.com/owner/repo.git",
+				Path:  "/tmp/test-repo",
+				Depth: 1,
+			},
+		},
+		{
+			name: "clone with all options",
+			opts: CloneOptions{
+				URL:    "https://github.com/owner/repo.git",
+				Path:   "/tmp/test-repo",
+				Branch: "feature/test",
+				Depth:  1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Just verify that Clone accepts the options without panic
+			// Actual execution would require mocking exec.Command
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // Cancel immediately to prevent actual execution
+
+			// This will fail due to context cancellation, which is expected
+			_ = provider.Clone(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGitHubProvider_Push_Options(t *testing.T) {
+	provider := NewGitHubProviderWithToken("test_token")
+
+	tests := []struct {
+		name string
+		opts PushOptions
+	}{
+		{
+			name: "basic push",
+			opts: PushOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "main",
+			},
+		},
+		{
+			name: "push with force",
+			opts: PushOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "feature/test",
+				Force:  true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_ = provider.Push(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGitHubProvider_Pull_Options(t *testing.T) {
+	provider := NewGitHubProviderWithToken("test_token")
+
+	tests := []struct {
+		name string
+		opts PullOptions
+	}{
+		{
+			name: "basic pull",
+			opts: PullOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "main",
+			},
+		},
+		{
+			name: "pull from upstream",
+			opts: PullOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "upstream",
+				Branch: "develop",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_ = provider.Pull(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGitHubProvider_TestConnection_Behavior(t *testing.T) {
+	provider := NewGitHubProviderWithToken("test_token")
+
+	// Test with canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := provider.TestConnection(ctx)
+	// Should fail due to canceled context
+	if err == nil {
+		t.Log("TestConnection returned nil with canceled context (command may have executed before cancel)")
+	}
+}

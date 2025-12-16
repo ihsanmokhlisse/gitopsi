@@ -34,22 +34,25 @@ func TestNewProvider(t *testing.T) {
 			wantType:     ProviderGitLab,
 		},
 		{
-			name:         "Gitea not implemented",
+			name:         "Gitea provider",
 			providerType: ProviderGitea,
-			instance:     "",
-			wantErr:      true,
+			instance:     "gitea.example.com",
+			wantErr:      false,
+			wantType:     ProviderGitea,
 		},
 		{
-			name:         "Azure DevOps not implemented",
+			name:         "Azure DevOps provider",
 			providerType: ProviderAzureDevOps,
 			instance:     "",
-			wantErr:      true,
+			wantErr:      false,
+			wantType:     ProviderAzureDevOps,
 		},
 		{
-			name:         "Bitbucket not implemented",
+			name:         "Bitbucket provider",
 			providerType: ProviderBitbucket,
 			instance:     "",
-			wantErr:      true,
+			wantErr:      false,
+			wantType:     ProviderBitbucket,
 		},
 		{
 			name:         "Generic not implemented",
@@ -126,14 +129,22 @@ func TestNewProviderFromURL(t *testing.T) {
 			wantType: ProviderGitLab,
 		},
 		{
-			name:    "Bitbucket (not implemented)",
-			url:     "git@bitbucket.org:workspace/repo.git",
-			wantErr: true,
+			name:     "Bitbucket SSH URL",
+			url:      "git@bitbucket.org:workspace/repo.git",
+			wantErr:  false,
+			wantType: ProviderBitbucket,
 		},
 		{
-			name:    "Azure DevOps (not implemented)",
-			url:     "https://dev.azure.com/org/project/_git/repo",
-			wantErr: true,
+			name:     "Azure DevOps HTTPS URL",
+			url:      "https://dev.azure.com/org/project/_git/repo",
+			wantErr:  false,
+			wantType: ProviderAzureDevOps,
+		},
+		{
+			name:     "Gitea self-hosted",
+			url:      "https://gitea.example.com/org/repo.git",
+			wantErr:  false,
+			wantType: ProviderGitea,
 		},
 		{
 			name:    "Invalid URL",
@@ -272,12 +283,15 @@ func TestGetSupportedProviders(t *testing.T) {
 func TestGetImplementedProviders(t *testing.T) {
 	providers := GetImplementedProviders()
 
-	if len(providers) != 2 {
-		t.Errorf("GetImplementedProviders() returned %d providers, want 2", len(providers))
+	if len(providers) != 5 {
+		t.Errorf("GetImplementedProviders() returned %d providers, want 5", len(providers))
 	}
 
 	hasGitHub := false
 	hasGitLab := false
+	hasGitea := false
+	hasAzure := false
+	hasBitbucket := false
 
 	for _, p := range providers {
 		if p == ProviderGitHub {
@@ -286,6 +300,15 @@ func TestGetImplementedProviders(t *testing.T) {
 		if p == ProviderGitLab {
 			hasGitLab = true
 		}
+		if p == ProviderGitea {
+			hasGitea = true
+		}
+		if p == ProviderAzureDevOps {
+			hasAzure = true
+		}
+		if p == ProviderBitbucket {
+			hasBitbucket = true
+		}
 	}
 
 	if !hasGitHub {
@@ -293,6 +316,15 @@ func TestGetImplementedProviders(t *testing.T) {
 	}
 	if !hasGitLab {
 		t.Error("GetImplementedProviders() should include GitLab")
+	}
+	if !hasGitea {
+		t.Error("GetImplementedProviders() should include Gitea")
+	}
+	if !hasAzure {
+		t.Error("GetImplementedProviders() should include Azure DevOps")
+	}
+	if !hasBitbucket {
+		t.Error("GetImplementedProviders() should include Bitbucket")
 	}
 }
 
@@ -303,9 +335,9 @@ func TestIsProviderImplemented(t *testing.T) {
 	}{
 		{ProviderGitHub, true},
 		{ProviderGitLab, true},
-		{ProviderGitea, false},
-		{ProviderAzureDevOps, false},
-		{ProviderBitbucket, false},
+		{ProviderGitea, true},
+		{ProviderAzureDevOps, true},
+		{ProviderBitbucket, true},
 		{ProviderGeneric, false},
 	}
 

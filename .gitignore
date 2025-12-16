@@ -18,6 +18,7 @@ coverage.html
 !.gitlab-ci.yml
 !.gitignore
 !.goreleaser.yaml
+!.golangci.yaml
 !.editorconfig
 
 # OS

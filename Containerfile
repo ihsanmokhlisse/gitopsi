@@ -22,17 +22,19 @@ WORKDIR /workspace
 
 ENTRYPOINT ["gitopsi"]
 
-FROM golang:1.22-alpine AS dev
+FROM golang:1.22 AS dev
 
 WORKDIR /app
 
-RUN apk add --no-cache git make bash
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git make bash \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY go.mod ./
+COPY go.mod go.sum* ./
 RUN go mod download
 
 COPY . .
 RUN go mod tidy
 
-CMD ["make", "test"]
+CMD ["go", "test", "-v", "-race", "./..."]
 

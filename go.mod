@@ -1,6 +1,6 @@
 module github.com/ihsanmokhlisse/gitopsi
 
-go 1.22
+go 1.23
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7

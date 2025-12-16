@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Builder - Compile the Go binary
 # -----------------------------------------------------------------------------
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
@@ -80,7 +80,7 @@ CMD ["--help"]
 # -----------------------------------------------------------------------------
 # Stage 4: Development - Full development environment
 # -----------------------------------------------------------------------------
-FROM golang:1.22 AS dev
+FROM golang:1.23 AS dev
 
 WORKDIR /app
 

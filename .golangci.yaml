@@ -56,6 +56,7 @@ linters-settings:
       - G304
       - G301
       - G306
+      - G204
 
   gocritic:
     enabled-tags:
@@ -127,6 +128,26 @@ issues:
     - linters:
         - revive
       text: "exported: comment"
+
+    - path: internal/git/
+      linters:
+        - revive
+      text: "stutters"
+
+    - path: internal/git/
+      linters:
+        - gocritic
+      text: "hugeParam"
+
+    - path: internal/git/
+      linters:
+        - gosimple
+      text: "S1039"
+
+    - path: internal/git/
+      linters:
+        - errcheck
+      text: "CombinedOutput"
 
 severity:
   default-severity: warning

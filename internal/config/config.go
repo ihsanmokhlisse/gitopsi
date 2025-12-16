@@ -3,6 +3,7 @@ package config
 type Config struct {
 	Project      Project        `yaml:"project"`
 	Output       Output         `yaml:"output"`
+	Git          GitConfig      `yaml:"git"`
 	Platform     string         `yaml:"platform"`
 	Scope        string         `yaml:"scope"`
 	GitOpsTool   string         `yaml:"gitops_tool"`
@@ -21,6 +22,25 @@ type Output struct {
 	Type   string `yaml:"type"`
 	URL    string `yaml:"url"`
 	Branch string `yaml:"branch"`
+}
+
+type GitConfig struct {
+	URL      string      `yaml:"url"`
+	Branch   string      `yaml:"branch"`
+	Provider GitProvider `yaml:"provider"`
+	Auth     GitAuth     `yaml:"auth"`
+}
+
+type GitProvider struct {
+	Name     string `yaml:"name"`
+	Instance string `yaml:"instance"`
+}
+
+type GitAuth struct {
+	Method   string `yaml:"method"`
+	Token    string `yaml:"token"`
+	SSHKey   string `yaml:"ssh_key"`
+	TokenEnv string `yaml:"token_env"`
 }
 
 type Environment struct {
@@ -56,6 +76,12 @@ func NewDefaultConfig() *Config {
 		Output: Output{
 			Type:   "local",
 			Branch: "main",
+		},
+		Git: GitConfig{
+			Branch: "main",
+			Auth: GitAuth{
+				Method: "ssh",
+			},
 		},
 		Environments: []Environment{
 			{Name: "dev"},

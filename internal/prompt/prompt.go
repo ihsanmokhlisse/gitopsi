@@ -93,13 +93,39 @@ func RunWith(p Prompter) (*config.Config, error) {
 
 	if answers.OutputType == "git" {
 		gitURL := ""
-		prompt := &survey.Input{
+		gitURLPrompt := &survey.Input{
 			Message: "Git repository URL:",
+			Help:    "e.g., git@github.com:org/repo.git or https://gitlab.com/group/project.git",
 		}
-		if err := p.AskOne(prompt, &gitURL, survey.WithValidator(survey.Required)); err != nil {
+		if err := p.AskOne(gitURLPrompt, &gitURL, survey.WithValidator(survey.Required)); err != nil {
 			return nil, err
 		}
 		cfg.Output.URL = gitURL
+		cfg.Git.URL = gitURL
+
+		authMethod := ""
+		authPrompt := &survey.Select{
+			Message: "Authentication method:",
+			Options: []string{"ssh", "token"},
+			Default: "ssh",
+		}
+		if err := p.AskOne(authPrompt, &authMethod); err != nil {
+			return nil, err
+		}
+		cfg.Git.Auth.Method = authMethod
+
+		if authMethod == "token" {
+			tokenEnv := ""
+			tokenPrompt := &survey.Input{
+				Message: "Token environment variable name:",
+				Default: "GIT_TOKEN",
+				Help:    "e.g., GITHUB_TOKEN, GITLAB_TOKEN, GIT_TOKEN",
+			}
+			if err := p.AskOne(tokenPrompt, &tokenEnv); err != nil {
+				return nil, err
+			}
+			cfg.Git.Auth.TokenEnv = tokenEnv
+		}
 	}
 
 	envNames := []string{}

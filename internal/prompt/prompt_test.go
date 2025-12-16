@@ -125,7 +125,16 @@ func TestRunWithMock_GitOutput(t *testing.T) {
 			askOneCallCount++
 			switch v := response.(type) {
 			case *string:
-				*v = "https://github.com/test/repo.git"
+				switch askOneCallCount {
+				case 1:
+					*v = "https://github.com/test/repo.git"
+				case 2:
+					*v = "token"
+				case 3:
+					*v = "GITHUB_TOKEN"
+				default:
+					*v = ""
+				}
 			case *[]string:
 				*v = []string{"dev"}
 			case *bool:
@@ -148,8 +157,20 @@ func TestRunWithMock_GitOutput(t *testing.T) {
 		t.Errorf("Output.URL = %s, want https://github.com/test/repo.git", cfg.Output.URL)
 	}
 
-	if askOneCallCount != 3 {
-		t.Errorf("AskOne() called %d times, want 3 (git URL + envs + docs)", askOneCallCount)
+	if cfg.Git.URL != "https://github.com/test/repo.git" {
+		t.Errorf("Git.URL = %s, want https://github.com/test/repo.git", cfg.Git.URL)
+	}
+
+	if cfg.Git.Auth.Method != "token" {
+		t.Errorf("Git.Auth.Method = %s, want token", cfg.Git.Auth.Method)
+	}
+
+	if cfg.Git.Auth.TokenEnv != "GITHUB_TOKEN" {
+		t.Errorf("Git.Auth.TokenEnv = %s, want GITHUB_TOKEN", cfg.Git.Auth.TokenEnv)
+	}
+
+	if askOneCallCount != 5 {
+		t.Errorf("AskOne() called %d times, want 5 (git URL + auth method + token env + envs + docs)", askOneCallCount)
 	}
 }
 

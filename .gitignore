@@ -1,0 +1,36 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+gitopsi
+
+# Test
+*.test
+*.out
+coverage.html
+
+# IDE & Editor (ignore .* except specific)
+.*
+!.github
+!.gitlab-ci.yml
+!.gitignore
+!.goreleaser.yaml
+!.editorconfig
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+
+# Temporary
+tmp/
+*.tmp
+*.bak
+
+# Internal documentation (not for public repo)
+docs-internal/

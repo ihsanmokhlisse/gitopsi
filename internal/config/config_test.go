@@ -157,3 +157,154 @@ func TestValidGitOpsTools(t *testing.T) {
 	}
 }
 
+func TestConfigValidateAllScenarios(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{
+			name: "valid kubernetes both argocd",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "kubernetes"
+				c.Scope = "both"
+				c.GitOpsTool = "argocd"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid openshift infrastructure flux",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "openshift"
+				c.Scope = "infrastructure"
+				c.GitOpsTool = "flux"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid aks application both tools",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "aks"
+				c.Scope = "application"
+				c.GitOpsTool = "both"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid eks with git url",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "eks"
+				c.Scope = "both"
+				c.GitOpsTool = "argocd"
+				c.Output.Type = "git"
+				c.Output.URL = "https://github.com/test/repo.git"
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid gitops tool",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "kubernetes"
+				c.Scope = "both"
+				c.GitOpsTool = "invalid"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid output type",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "kubernetes"
+				c.Scope = "both"
+				c.GitOpsTool = "argocd"
+				c.Output.Type = "invalid"
+			},
+			wantErr: true,
+		},
+		{
+			name: "environment without name",
+			modify: func(c *Config) {
+				c.Project.Name = "test"
+				c.Platform = "kubernetes"
+				c.Scope = "both"
+				c.GitOpsTool = "argocd"
+				c.Environments = []Environment{{Name: ""}}
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewDefaultConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDefaultConfigInfrastructure(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	if !cfg.Infra.Namespaces {
+		t.Error("Default namespaces should be true")
+	}
+	if !cfg.Infra.RBAC {
+		t.Error("Default RBAC should be true")
+	}
+	if !cfg.Infra.NetworkPolicies {
+		t.Error("Default network policies should be true")
+	}
+	if !cfg.Infra.ResourceQuotas {
+		t.Error("Default resource quotas should be true")
+	}
+}
+
+func TestDefaultConfigDocs(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	if !cfg.Docs.Readme {
+		t.Error("Default readme should be true")
+	}
+	if !cfg.Docs.Architecture {
+		t.Error("Default architecture should be true")
+	}
+	if !cfg.Docs.Onboarding {
+		t.Error("Default onboarding should be true")
+	}
+}
+
+func TestDefaultConfigOutput(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	if cfg.Output.Type != "local" {
+		t.Errorf("Default output type should be local, got %s", cfg.Output.Type)
+	}
+	if cfg.Output.Branch != "main" {
+		t.Errorf("Default branch should be main, got %s", cfg.Output.Branch)
+	}
+}
+
+func TestDefaultConfigEnvironments(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	expectedEnvs := []string{"dev", "staging", "prod"}
+	if len(cfg.Environments) != len(expectedEnvs) {
+		t.Fatalf("Expected %d environments, got %d", len(expectedEnvs), len(cfg.Environments))
+	}
+
+	for i, expected := range expectedEnvs {
+		if cfg.Environments[i].Name != expected {
+			t.Errorf("Environment %d should be %s, got %s", i, expected, cfg.Environments[i].Name)
+		}
+	}
+}
+

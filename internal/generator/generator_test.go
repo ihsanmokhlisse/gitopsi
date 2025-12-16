@@ -1030,6 +1030,12 @@ func TestGenerateStructureCreatesAllDirs(t *testing.T) {
 			{Name: "dev"},
 			{Name: "prod"},
 		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
 	}
 
 	writer := output.New(tmpDir, false, false)
@@ -1048,6 +1054,8 @@ func TestGenerateStructureCreatesAllDirs(t *testing.T) {
 		"structure-test/infrastructure/base",
 		"structure-test/infrastructure/base/namespaces",
 		"structure-test/infrastructure/base/rbac",
+		"structure-test/infrastructure/base/network-policies",
+		"structure-test/infrastructure/base/resource-quotas",
 		"structure-test/infrastructure/overlays/dev",
 		"structure-test/infrastructure/overlays/prod",
 		"structure-test/applications/base",
@@ -1100,6 +1108,478 @@ func TestGenerateGitOpsForAllTools(t *testing.T) {
 				t.Errorf("%s directory not created", tool)
 			}
 		})
+	}
+}
+
+func TestGenerateRBAC(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "rbac-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+			RBAC:       true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateRBAC()
+	if err != nil {
+		t.Fatalf("generateRBAC() error = %v", err)
+	}
+
+	expectedFiles := []string{
+		"rbac-test/infrastructure/base/rbac/dev.yaml",
+		"rbac-test/infrastructure/base/rbac/prod.yaml",
+	}
+
+	for _, file := range expectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("RBAC file not created: %s", file)
+		}
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "rbac-test/infrastructure/base/rbac/dev.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read RBAC file: %v", err)
+	}
+
+	checks := []string{"kind: Role", "kind: RoleBinding", "rbac-test-dev"}
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("RBAC file missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateNetworkPolicies(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "np-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			NetworkPolicies: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateNetworkPolicies()
+	if err != nil {
+		t.Fatalf("generateNetworkPolicies() error = %v", err)
+	}
+
+	npFile := filepath.Join(tmpDir, "np-test/infrastructure/base/network-policies/dev.yaml")
+	if _, err := os.Stat(npFile); os.IsNotExist(err) {
+		t.Fatal("NetworkPolicy file not created")
+	}
+
+	content, err := os.ReadFile(npFile)
+	if err != nil {
+		t.Fatalf("Failed to read NetworkPolicy file: %v", err)
+	}
+
+	checks := []string{"kind: NetworkPolicy", "np-test-network-policy", "Ingress", "Egress"}
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("NetworkPolicy file missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateResourceQuotas(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "rq-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+			{Name: "custom"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:     true,
+			ResourceQuotas: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateResourceQuotas()
+	if err != nil {
+		t.Fatalf("generateResourceQuotas() error = %v", err)
+	}
+
+	expectedFiles := []string{
+		"rq-test/infrastructure/base/resource-quotas/dev.yaml",
+		"rq-test/infrastructure/base/resource-quotas/staging.yaml",
+		"rq-test/infrastructure/base/resource-quotas/prod.yaml",
+		"rq-test/infrastructure/base/resource-quotas/custom.yaml",
+	}
+
+	for _, file := range expectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("ResourceQuota file not created: %s", file)
+		}
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "rq-test/infrastructure/base/resource-quotas/prod.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read ResourceQuota file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "kind: ResourceQuota") {
+		t.Error("ResourceQuota file missing kind")
+	}
+
+	if !strings.Contains(string(content), "limits.cpu") {
+		t.Error("ResourceQuota file missing limits.cpu")
+	}
+}
+
+func TestGenerateAllInfrastructure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "full-infra"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateInfrastructure()
+	if err != nil {
+		t.Fatalf("generateInfrastructure() error = %v", err)
+	}
+
+	expectedDirs := []string{
+		"full-infra/infrastructure/base/namespaces",
+		"full-infra/infrastructure/base/rbac",
+		"full-infra/infrastructure/base/network-policies",
+		"full-infra/infrastructure/base/resource-quotas",
+	}
+
+	for _, dir := range expectedDirs {
+		fullPath := filepath.Join(tmpDir, dir)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Infrastructure directory not created: %s", dir)
+		}
+	}
+}
+
+func TestGenerateArchitectureDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "arch-test",
+			Description: "Test project",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Docs: config.Documentation{
+			Readme:       true,
+			Architecture: true,
+			Onboarding:   false,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateDocs()
+	if err != nil {
+		t.Fatalf("generateDocs() error = %v", err)
+	}
+
+	archFile := filepath.Join(tmpDir, "arch-test/docs/ARCHITECTURE.md")
+	if _, err := os.Stat(archFile); os.IsNotExist(err) {
+		t.Fatal("ARCHITECTURE.md not created")
+	}
+
+	content, err := os.ReadFile(archFile)
+	if err != nil {
+		t.Fatalf("Failed to read ARCHITECTURE.md: %v", err)
+	}
+
+	checks := []string{"arch-test", "kubernetes", "argocd", "dev", "prod", "Infrastructure Layer"}
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("ARCHITECTURE.md missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateOnboardingDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "onboard-test",
+			Description: "Test project",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev", Cluster: "https://dev.k8s.local"},
+		},
+		Docs: config.Documentation{
+			Readme:       false,
+			Architecture: false,
+			Onboarding:   true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateDocs()
+	if err != nil {
+		t.Fatalf("generateDocs() error = %v", err)
+	}
+
+	onboardFile := filepath.Join(tmpDir, "onboard-test/docs/ONBOARDING.md")
+	if _, err := os.Stat(onboardFile); os.IsNotExist(err) {
+		t.Fatal("ONBOARDING.md not created")
+	}
+
+	content, err := os.ReadFile(onboardFile)
+	if err != nil {
+		t.Fatalf("Failed to read ONBOARDING.md: %v", err)
+	}
+
+	checks := []string{"onboard-test", "Prerequisites", "Quick Start", "bootstrap.sh", "argocd"}
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("ONBOARDING.md missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateAllDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "all-docs",
+			Description: "Test project with all docs",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{
+			Readme:       true,
+			Architecture: true,
+			Onboarding:   true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateDocs()
+	if err != nil {
+		t.Fatalf("generateDocs() error = %v", err)
+	}
+
+	expectedFiles := []string{
+		"all-docs/README.md",
+		"all-docs/docs/ARCHITECTURE.md",
+		"all-docs/docs/ONBOARDING.md",
+	}
+
+	for _, file := range expectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Doc file not created: %s", file)
+		}
+	}
+}
+
+func TestGenerateNoDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-docs"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{
+			Readme:       false,
+			Architecture: false,
+			Onboarding:   false,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateDocs()
+	if err != nil {
+		t.Fatalf("generateDocs() error = %v", err)
+	}
+
+	notExpectedFiles := []string{
+		"no-docs/README.md",
+		"no-docs/docs/ARCHITECTURE.md",
+		"no-docs/docs/ONBOARDING.md",
+	}
+
+	for _, file := range notExpectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
+			t.Errorf("Doc file should not be created when disabled: %s", file)
+		}
+	}
+}
+
+func TestGenerateCompleteProject(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "complete-project",
+			Description: "A complete GitOps project",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output: config.Output{
+			Type: "local",
+			URL:  "https://github.com/test/repo.git",
+		},
+		Environments: []config.Environment{
+			{Name: "dev", Cluster: "https://dev.k8s.local"},
+			{Name: "staging", Cluster: "https://staging.k8s.local"},
+			{Name: "prod", Cluster: "https://prod.k8s.local"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+		Apps: []config.Application{
+			{Name: "frontend", Image: "nginx:latest", Port: 80, Replicas: 2},
+			{Name: "backend", Image: "node:18", Port: 3000, Replicas: 3},
+		},
+		Docs: config.Documentation{
+			Readme:       true,
+			Architecture: true,
+			Onboarding:   true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	expectedItems := []string{
+		"complete-project/README.md",
+		"complete-project/docs/ARCHITECTURE.md",
+		"complete-project/docs/ONBOARDING.md",
+		"complete-project/infrastructure/base/namespaces/dev.yaml",
+		"complete-project/infrastructure/base/rbac/dev.yaml",
+		"complete-project/infrastructure/base/network-policies/dev.yaml",
+		"complete-project/infrastructure/base/resource-quotas/dev.yaml",
+		"complete-project/applications/base/frontend/deployment.yaml",
+		"complete-project/applications/base/backend/deployment.yaml",
+		"complete-project/argocd/projects/infrastructure.yaml",
+		"complete-project/argocd/applicationsets/infra-dev.yaml",
+		"complete-project/scripts/bootstrap.sh",
+		"complete-project/scripts/validate.sh",
+	}
+
+	for _, item := range expectedItems {
+		fullPath := filepath.Join(tmpDir, item)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Expected item not created: %s", item)
+		}
 	}
 }
 

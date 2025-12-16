@@ -407,3 +407,276 @@ func TestRenderServiceAllFields(t *testing.T) {
 	}
 }
 
+func TestRenderRBACTemplate(t *testing.T) {
+	data := map[string]string{
+		"Name":      "test-project",
+		"Namespace": "test-project-dev",
+		"Env":       "dev",
+	}
+
+	result, err := Render("infrastructure/rbac.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"kind: Role",
+		"kind: RoleBinding",
+		"test-project-role",
+		"test-project-rolebinding",
+		"namespace: test-project-dev",
+		"app.kubernetes.io/env: dev",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("RBAC template missing: %s", check)
+		}
+	}
+}
+
+func TestRenderNetworkPolicyTemplate(t *testing.T) {
+	data := map[string]string{
+		"Name":      "test-project",
+		"Namespace": "test-project-dev",
+		"Env":       "dev",
+	}
+
+	result, err := Render("infrastructure/networkpolicy.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"kind: NetworkPolicy",
+		"test-project-network-policy",
+		"namespace: test-project-dev",
+		"Ingress",
+		"Egress",
+		"port: 80",
+		"port: 443",
+		"port: 53",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("NetworkPolicy template missing: %s", check)
+		}
+	}
+}
+
+func TestRenderResourceQuotaTemplate(t *testing.T) {
+	data := map[string]string{
+		"Name":           "test-project",
+		"Namespace":      "test-project-dev",
+		"Env":            "dev",
+		"RequestsCPU":    "4",
+		"RequestsMemory": "8Gi",
+		"LimitsCPU":      "8",
+		"LimitsMemory":   "16Gi",
+		"MaxPods":        "50",
+		"MaxServices":    "20",
+		"MaxConfigMaps":  "50",
+		"MaxSecrets":     "50",
+	}
+
+	result, err := Render("infrastructure/resourcequota.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"kind: ResourceQuota",
+		"test-project-quota",
+		"namespace: test-project-dev",
+		"requests.cpu",
+		"requests.memory",
+		"limits.cpu",
+		"limits.memory",
+		"pods:",
+		"services:",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("ResourceQuota template missing: %s", check)
+		}
+	}
+}
+
+func TestRenderArchitectureTemplate(t *testing.T) {
+	data := map[string]interface{}{
+		"Project": map[string]string{
+			"Name":        "arch-project",
+			"Description": "Test project",
+		},
+		"Platform":   "kubernetes",
+		"Scope":      "both",
+		"GitOpsTool": "argocd",
+		"Environments": []map[string]string{
+			{"Name": "dev", "Cluster": "https://dev.k8s"},
+			{"Name": "prod", "Cluster": "https://prod.k8s"},
+		},
+	}
+
+	result, err := Render("docs/ARCHITECTURE.md.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"arch-project",
+		"Architecture",
+		"Repository Structure",
+		"kubernetes",
+		"argocd",
+		"Infrastructure Layer",
+		"Application Layer",
+		"GitOps Layer",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("ARCHITECTURE.md template missing: %s", check)
+		}
+	}
+}
+
+func TestRenderOnboardingTemplate(t *testing.T) {
+	data := map[string]interface{}{
+		"Project": map[string]string{
+			"Name":        "onboard-project",
+			"Description": "Test project",
+		},
+		"Platform":   "kubernetes",
+		"Scope":      "both",
+		"GitOpsTool": "argocd",
+		"Environments": []map[string]string{
+			{"Name": "dev", "Cluster": "https://dev.k8s"},
+		},
+	}
+
+	result, err := Render("docs/ONBOARDING.md.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"onboard-project",
+		"Onboarding Guide",
+		"Prerequisites",
+		"Quick Start",
+		"Bootstrap the Cluster",
+		"Common Tasks",
+		"Troubleshooting",
+		"argocd",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("ONBOARDING.md template missing: %s", check)
+		}
+	}
+}
+
+func TestRenderAllInfrastructureTemplates(t *testing.T) {
+	templates := []struct {
+		name string
+		data map[string]interface{}
+	}{
+		{
+			name: "infrastructure/namespace.yaml.tmpl",
+			data: map[string]interface{}{"Name": "ns", "Env": "dev"},
+		},
+		{
+			name: "infrastructure/rbac.yaml.tmpl",
+			data: map[string]interface{}{"Name": "proj", "Namespace": "ns", "Env": "dev"},
+		},
+		{
+			name: "infrastructure/networkpolicy.yaml.tmpl",
+			data: map[string]interface{}{"Name": "proj", "Namespace": "ns", "Env": "dev"},
+		},
+		{
+			name: "infrastructure/resourcequota.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "proj", "Namespace": "ns", "Env": "dev",
+				"RequestsCPU": "4", "RequestsMemory": "8Gi",
+				"LimitsCPU": "8", "LimitsMemory": "16Gi",
+				"MaxPods": "50", "MaxServices": "20",
+				"MaxConfigMaps": "50", "MaxSecrets": "50",
+			},
+		},
+	}
+
+	for _, tt := range templates {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Render(tt.name, tt.data)
+			if err != nil {
+				t.Fatalf("Render(%s) error = %v", tt.name, err)
+			}
+			if len(result) == 0 {
+				t.Errorf("Render(%s) returned empty result", tt.name)
+			}
+		})
+	}
+}
+
+func TestRenderAllDocsTemplates(t *testing.T) {
+	baseData := map[string]interface{}{
+		"Project": map[string]string{
+			"Name":        "test-project",
+			"Description": "Test",
+		},
+		"Platform":   "kubernetes",
+		"Scope":      "both",
+		"GitOpsTool": "argocd",
+		"Environments": []map[string]string{
+			{"Name": "dev", "Cluster": "https://dev.k8s"},
+		},
+	}
+
+	templates := []string{
+		"docs/README.md.tmpl",
+		"docs/ARCHITECTURE.md.tmpl",
+		"docs/ONBOARDING.md.tmpl",
+	}
+
+	for _, tmpl := range templates {
+		t.Run(tmpl, func(t *testing.T) {
+			result, err := Render(tmpl, baseData)
+			if err != nil {
+				t.Fatalf("Render(%s) error = %v", tmpl, err)
+			}
+			if len(result) == 0 {
+				t.Errorf("Render(%s) returned empty result", tmpl)
+			}
+		})
+	}
+}
+
+func TestListIncludesNewTemplates(t *testing.T) {
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	expectedDirs := []string{"argocd", "docs", "infrastructure", "kubernetes"}
+	for _, dir := range expectedDirs {
+		found := false
+		for _, name := range names {
+			if name == dir {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("List() missing expected directory: %s", dir)
+		}
+	}
+}
+

@@ -76,8 +76,16 @@ func (g *Generator) generateStructure() error {
 		dirs = append(dirs,
 			g.Config.Project.Name+"/infrastructure/base",
 			g.Config.Project.Name+"/infrastructure/base/namespaces",
-			g.Config.Project.Name+"/infrastructure/base/rbac",
 		)
+		if g.Config.Infra.RBAC {
+			dirs = append(dirs, g.Config.Project.Name+"/infrastructure/base/rbac")
+		}
+		if g.Config.Infra.NetworkPolicies {
+			dirs = append(dirs, g.Config.Project.Name+"/infrastructure/base/network-policies")
+		}
+		if g.Config.Infra.ResourceQuotas {
+			dirs = append(dirs, g.Config.Project.Name+"/infrastructure/base/resource-quotas")
+		}
 		for _, env := range g.Config.Environments {
 			dirs = append(dirs, g.Config.Project.Name+"/infrastructure/overlays/"+env.Name)
 		}

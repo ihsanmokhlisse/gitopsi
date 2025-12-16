@@ -9,14 +9,40 @@ import (
 func (g *Generator) generateDocs() error {
 	fmt.Println("📚 Generating documentation...")
 
-	content, err := templates.Render("docs/README.md.tmpl", g.Config)
-	if err != nil {
-		return err
+	if g.Config.Docs.Readme {
+		content, err := templates.Render("docs/README.md.tmpl", g.Config)
+		if err != nil {
+			return err
+		}
+
+		path := g.Config.Project.Name + "/README.md"
+		if err := g.Writer.WriteFile(path, content); err != nil {
+			return err
+		}
 	}
 
-	path := g.Config.Project.Name + "/README.md"
-	if err := g.Writer.WriteFile(path, content); err != nil {
-		return err
+	if g.Config.Docs.Architecture {
+		content, err := templates.Render("docs/ARCHITECTURE.md.tmpl", g.Config)
+		if err != nil {
+			return err
+		}
+
+		path := g.Config.Project.Name + "/docs/ARCHITECTURE.md"
+		if err := g.Writer.WriteFile(path, content); err != nil {
+			return err
+		}
+	}
+
+	if g.Config.Docs.Onboarding {
+		content, err := templates.Render("docs/ONBOARDING.md.tmpl", g.Config)
+		if err != nil {
+			return err
+		}
+
+		path := g.Config.Project.Name + "/docs/ONBOARDING.md"
+		if err := g.Writer.WriteFile(path, content); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -91,4 +117,3 @@ echo "Validation complete!"
 
 	return nil
 }
-

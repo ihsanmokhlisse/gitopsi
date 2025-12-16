@@ -11,11 +11,11 @@ func NewProvider(providerType ProviderType, instance string) (Provider, error) {
 	case ProviderGitLab:
 		return NewGitLabProviderWithInstance(instance), nil
 	case ProviderGitea:
-		return nil, fmt.Errorf("Gitea provider not yet implemented")
+		return NewGiteaProvider(instance), nil
 	case ProviderAzureDevOps:
-		return nil, fmt.Errorf("Azure DevOps provider not yet implemented")
+		return NewAzureDevOpsProvider("", ""), nil
 	case ProviderBitbucket:
-		return nil, fmt.Errorf("Bitbucket provider not yet implemented")
+		return NewBitbucketProvider(""), nil
 	case ProviderGeneric:
 		return nil, fmt.Errorf("Generic provider not yet implemented")
 	default:
@@ -56,6 +56,9 @@ func GetImplementedProviders() []ProviderType {
 	return []ProviderType{
 		ProviderGitHub,
 		ProviderGitLab,
+		ProviderGitea,
+		ProviderAzureDevOps,
+		ProviderBitbucket,
 	}
 }
 

@@ -35,3 +35,7 @@ tmp/
 
 # Internal documentation (not for public repo)
 docs-internal/
+
+# AI assistant files
+CLAUDE.md
+claude.md

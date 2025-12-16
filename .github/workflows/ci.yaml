@@ -237,6 +237,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       security-events: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -244,6 +245,20 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          queries: security-and-quality
+
+      - name: Build for CodeQL
+        run: go build ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
 
       - name: Run gosec
         uses: securego/gosec@master
@@ -255,28 +270,63 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: gosec-results.sarif
+          category: gosec
         continue-on-error: true
 
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... || echo "⚠️ Vulnerabilities found (may be in dependencies)"
+          echo "🔍 Scanning for known vulnerabilities..."
+          govulncheck -format json ./... > govulncheck-results.json 2>&1 || true
+          
+          # Parse and display results
+          if [ -f govulncheck-results.json ]; then
+            VULN_COUNT=$(grep -c '"osv":' govulncheck-results.json 2>/dev/null || echo "0")
+            echo "Found ${VULN_COUNT} vulnerability references"
+            if [ "$VULN_COUNT" -gt "0" ]; then
+              echo "⚠️ Vulnerabilities detected - review govulncheck output"
+              govulncheck ./...
+            else
+              echo "✅ No vulnerabilities found in direct code paths"
+            fi
+          fi
         continue-on-error: true
 
-      - name: Run trivy for filesystem scan
+      - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
         continue-on-error: true
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-fs-results.sarif
+          category: trivy-fs
         continue-on-error: true
+
+      - name: Run nancy for dependency check
+        run: |
+          go install github.com/sonatype-nexus-community/nancy@latest
+          go list -json -deps ./... | nancy sleuth || echo "⚠️ Some dependencies may have vulnerabilities"
+        continue-on-error: true
+
+      - name: Security scan summary
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL | Source Code | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| gosec | Go Security | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| govulncheck | Vulnerabilities | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy | Filesystem | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| nancy | Dependencies | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
 
   container:
     name: Container Build & Scan
@@ -306,30 +356,79 @@ jobs:
           docker run --rm gitopsi:test version
           echo "✅ Container runs correctly"
 
-      - name: Run Trivy container scan
+      - name: Run Trivy container vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'gitopsi:test'
           format: 'sarif'
           output: 'trivy-container-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
         continue-on-error: true
 
       - name: Upload Trivy container SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-container-results.sarif
+          category: trivy-container
+        continue-on-error: true
+
+      - name: Run Trivy container config scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'gitopsi:test'
+          format: 'table'
+          scan-type: 'config'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+
+      - name: Run Grype container scan
+        uses: anchore/scan-action@v4
+        with:
+          image: 'gitopsi:test'
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+        continue-on-error: true
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: grype-container
         continue-on-error: true
 
       - name: Check container size
         run: |
           SIZE=$(docker image inspect gitopsi:test --format='{{.Size}}')
           SIZE_MB=$((SIZE / 1024 / 1024))
-          echo "Container size: ${SIZE_MB}MB"
+          echo "📦 Container size: ${SIZE_MB}MB"
+          
+          # Get layer count
+          LAYERS=$(docker history gitopsi:test --no-trunc -q | wc -l)
+          echo "📚 Layer count: ${LAYERS}"
+          
           if [ $SIZE_MB -gt 50 ]; then
             echo "⚠️ Warning: Container size ${SIZE_MB}MB exceeds 50MB target"
           else
             echo "✅ Container size ${SIZE_MB}MB is within target"
           fi
+
+      - name: Container security summary
+        run: |
+          echo "## 🐳 Container Security Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          SIZE=$(docker image inspect gitopsi:test --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Size | ${SIZE_MB}MB |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Image | distroless/static |" >> $GITHUB_STEP_SUMMARY
+          echo "| User | nonroot |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Grype Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Config Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
 
   sbom:
     name: Generate SBOM

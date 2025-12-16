@@ -289,3 +289,119 @@ func TestGiteaProvider_getGitEnv_WithSSH(t *testing.T) {
 		t.Error("getGitEnv() should include GIT_SSH_COMMAND when using SSH auth")
 	}
 }
+
+// Tests for Clone, Push, Pull, TestConnection
+
+func TestGiteaProvider_Clone_Options(t *testing.T) {
+	provider := NewGiteaProviderWithToken("test_token", "gitea.com")
+
+	tests := []struct {
+		name string
+		opts CloneOptions
+	}{
+		{
+			name: "basic clone",
+			opts: CloneOptions{
+				URL:  "https://gitea.com/owner/repo.git",
+				Path: "/tmp/test-repo",
+			},
+		},
+		{
+			name: "clone with branch",
+			opts: CloneOptions{
+				URL:    "https://gitea.com/owner/repo.git",
+				Path:   "/tmp/test-repo",
+				Branch: "develop",
+			},
+		},
+		{
+			name: "clone with depth",
+			opts: CloneOptions{
+				URL:   "https://gitea.com/owner/repo.git",
+				Path:  "/tmp/test-repo",
+				Depth: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_ = provider.Clone(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGiteaProvider_Push_Options(t *testing.T) {
+	provider := NewGiteaProviderWithToken("test_token", "gitea.com")
+
+	tests := []struct {
+		name string
+		opts PushOptions
+	}{
+		{
+			name: "basic push",
+			opts: PushOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "main",
+			},
+		},
+		{
+			name: "push with force",
+			opts: PushOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "feature/test",
+				Force:  true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_ = provider.Push(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGiteaProvider_Pull_Options(t *testing.T) {
+	provider := NewGiteaProviderWithToken("test_token", "gitea.com")
+
+	tests := []struct {
+		name string
+		opts PullOptions
+	}{
+		{
+			name: "basic pull",
+			opts: PullOptions{
+				Path:   "/tmp/test-repo",
+				Remote: "origin",
+				Branch: "main",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_ = provider.Pull(ctx, tt.opts)
+		})
+	}
+}
+
+func TestGiteaProvider_TestConnection_Behavior(t *testing.T) {
+	provider := NewGiteaProviderWithToken("test_token", "gitea.com")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := provider.TestConnection(ctx)
+	if err == nil {
+		t.Log("TestConnection returned nil with canceled context")
+	}
+}

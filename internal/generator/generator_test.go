@@ -1582,4 +1582,3 @@ func TestGenerateCompleteProject(t *testing.T) {
 		}
 	}
 }
-

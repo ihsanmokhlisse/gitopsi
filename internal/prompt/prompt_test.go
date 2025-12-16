@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AlecAivazis/survey/v2"
+
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 )
 
@@ -153,7 +154,7 @@ func TestRunWithMock_GitOutput(t *testing.T) {
 }
 
 func TestRunWithMock_AskError(t *testing.T) {
-	expectedErr := errors.New("user cancelled")
+	expectedErr := errors.New("user canceled")
 
 	mock := &MockPrompter{
 		AskFunc: func(qs []*survey.Question, response interface{}) error {

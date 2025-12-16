@@ -307,4 +307,3 @@ func TestDefaultConfigEnvironments(t *testing.T) {
 		}
 	}
 }
-

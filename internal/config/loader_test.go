@@ -192,4 +192,3 @@ platform: kubernetes
 		t.Error("Default gitops tool not applied")
 	}
 }
-

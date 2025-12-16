@@ -66,4 +66,3 @@ func (w *Writer) Exists(relativePath string) bool {
 	_, err := os.Stat(fullPath)
 	return err == nil
 }
-

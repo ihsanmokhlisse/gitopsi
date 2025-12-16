@@ -679,4 +679,3 @@ func TestListIncludesNewTemplates(t *testing.T) {
 		}
 	}
 }
-

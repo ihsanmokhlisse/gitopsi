@@ -1,15 +1,15 @@
 package config
 
 type Config struct {
-	Project      Project       `yaml:"project"`
-	Output       Output        `yaml:"output"`
-	Platform     string        `yaml:"platform"`
-	Scope        string        `yaml:"scope"`
-	GitOpsTool   string        `yaml:"gitops_tool"`
-	Environments []Environment `yaml:"environments"`
+	Project      Project        `yaml:"project"`
+	Output       Output         `yaml:"output"`
+	Platform     string         `yaml:"platform"`
+	Scope        string         `yaml:"scope"`
+	GitOpsTool   string         `yaml:"gitops_tool"`
+	Environments []Environment  `yaml:"environments"`
 	Infra        Infrastructure `yaml:"infrastructure"`
-	Apps         []Application `yaml:"applications"`
-	Docs         Documentation `yaml:"docs"`
+	Apps         []Application  `yaml:"applications"`
+	Docs         Documentation  `yaml:"docs"`
 }
 
 type Project struct {
@@ -75,4 +75,3 @@ func NewDefaultConfig() *Config {
 		},
 	}
 }
-

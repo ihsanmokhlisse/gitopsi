@@ -51,7 +51,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err = cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
@@ -60,7 +60,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		outputDir = "."
 	}
 
-	absOutput, err := filepath.Abs(outputDir)
+	var absOutput string
+	absOutput, err = filepath.Abs(outputDir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve output path: %w", err)
 	}
@@ -90,4 +91,3 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-

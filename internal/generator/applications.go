@@ -16,7 +16,7 @@ func (g *Generator) generateApplications() error {
 		}
 	}
 
-	var appDirs []string
+	appDirs := make([]string, 0, len(g.Config.Apps))
 
 	for _, app := range g.Config.Apps {
 		appDir := g.Config.Project.Name + "/applications/base/" + app.Name
@@ -30,7 +30,7 @@ func (g *Generator) generateApplications() error {
 		if err != nil {
 			return err
 		}
-		if err := g.Writer.WriteFile(appDir+"/deployment.yaml", deployContent); err != nil {
+		if err = g.Writer.WriteFile(appDir+"/deployment.yaml", deployContent); err != nil {
 			return err
 		}
 
@@ -38,7 +38,7 @@ func (g *Generator) generateApplications() error {
 		if err != nil {
 			return err
 		}
-		if err := g.Writer.WriteFile(appDir+"/service.yaml", svcContent); err != nil {
+		if err = g.Writer.WriteFile(appDir+"/service.yaml", svcContent); err != nil {
 			return err
 		}
 
@@ -49,7 +49,7 @@ func (g *Generator) generateApplications() error {
 		if err != nil {
 			return err
 		}
-		if err := g.Writer.WriteFile(appDir+"/kustomization.yaml", kContent); err != nil {
+		if err = g.Writer.WriteFile(appDir+"/kustomization.yaml", kContent); err != nil {
 			return err
 		}
 	}
@@ -83,4 +83,3 @@ func (g *Generator) generateApplications() error {
 
 	return nil
 }
-

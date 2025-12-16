@@ -61,4 +61,3 @@ func ValidScopes() []string {
 func ValidGitOpsTools() []string {
 	return validGitOpsTools
 }
-

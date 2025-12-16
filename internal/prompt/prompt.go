@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"github.com/AlecAivazis/survey/v2"
+
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 )
 

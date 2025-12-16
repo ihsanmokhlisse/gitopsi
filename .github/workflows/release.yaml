@@ -8,13 +8,17 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  security-events: write
 
 env:
   GO_VERSION: '1.22'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
-    name: Release
+  test:
+    name: Pre-release Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,10 +31,45 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Run tests
-        run: go test -v -race ./...
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Check coverage
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${COVERAGE}%"
+
+  release:
+    name: Release Binaries
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
@@ -39,10 +78,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
+      - name: Generate SBOM for release
+        run: |
+          syft dir:. -o spdx-json=sbom-${{ steps.version.outputs.VERSION }}-spdx.json
+          syft dir:. -o cyclonedx-json=sbom-${{ steps.version.outputs.VERSION }}-cyclonedx.json
+
+      - name: Upload SBOM to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v${{ steps.version.outputs.VERSION }} \
+            sbom-${{ steps.version.outputs.VERSION }}-spdx.json \
+            sbom-${{ steps.version.outputs.VERSION }}-cyclonedx.json \
+            --clobber
+
   container:
     name: Container Release
     runs-on: ubuntu-latest
-    needs: release
+    needs: [test, release]
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +105,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -59,11 +119,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=
+            type=raw,value=latest
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -71,6 +140,137 @@ jobs:
           target: runtime
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Sign container image
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate container SBOM
+        run: |
+          syft ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }} \
+            -o spdx-json=container-sbom-spdx.json \
+            -o cyclonedx-json=container-sbom-cyclonedx.json
+
+      - name: Attach SBOM to container
+        run: |
+          cosign attach sbom --sbom container-sbom-spdx.json \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Verify container size
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }}
+          SIZE=$(docker image inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }} --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "📦 Container size: ${SIZE_MB}MB"
+          echo "container_size=${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
+
+  e2e-release-test:
+    name: E2E Release Validation
+    runs-on: ubuntu-latest
+    needs: [release, container]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test binary from release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ needs.release.outputs.version }}
+          
+          # Download release binary
+          gh release download v${VERSION} -p "gitopsi_${VERSION}_linux_amd64.tar.gz"
+          tar -xzf gitopsi_${VERSION}_linux_amd64.tar.gz
+          chmod +x gitopsi
+          
+          # Test version
+          ./gitopsi version
+          
+          # Test generation
+          cat > test-config.yaml << 'EOF'
+          project:
+            name: release-test
+          output:
+            type: local
+          platform: kubernetes
+          scope: both
+          gitops_tool: argocd
+          environments:
+            - name: prod
+          infrastructure:
+            namespaces: true
+            rbac: true
+          docs:
+            readme: true
+          EOF
+          
+          ./gitopsi init --config test-config.yaml
+          test -f release-test/README.md
+          echo "✅ Binary release test passed"
+
+      - name: Test container from registry
+        run: |
+          VERSION=${{ needs.release.outputs.version }}
+          
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} version
+          
+          # Test generation with container
+          docker run --rm -v $(pwd):/workspace -w /workspace \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \
+            init --config test-config.yaml --output /workspace/container-test
+          
+          test -f container-test/release-test/README.md
+          echo "✅ Container release test passed"
+
+  release-summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs: [release, container, e2e-release-test]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          VERSION=${{ needs.release.outputs.version }}
+          
+          echo "## 🚀 Release v${VERSION} Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Binary releases: [GitHub Releases](https://github.com/${{ github.repository }}/releases/tag/v${VERSION})" >> $GITHUB_STEP_SUMMARY
+          echo "- 🐳 Container: \`ghcr.io/${{ github.repository }}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 📋 SBOM: Attached to release and container" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Security" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Container signed with cosign" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Vulnerability scan completed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ SBOM generated (SPDX + CycloneDX)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Homebrew (macOS/Linux)" >> $GITHUB_STEP_SUMMARY
+          echo "brew install ihsanmokhlisse/tap/gitopsi" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Container" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository }}:${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

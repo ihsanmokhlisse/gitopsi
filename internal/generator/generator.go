@@ -111,4 +111,3 @@ func (g *Generator) generateStructure() error {
 
 	return nil
 }
-

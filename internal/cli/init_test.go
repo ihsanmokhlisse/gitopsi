@@ -199,4 +199,3 @@ func TestInitCommandInheritsFlags(t *testing.T) {
 		t.Error("Init should inherit --verbose flag")
 	}
 }
-

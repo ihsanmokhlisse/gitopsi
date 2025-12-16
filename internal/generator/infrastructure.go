@@ -49,6 +49,12 @@ func (g *Generator) generateInfrastructure() error {
 	if g.Config.Infra.RBAC {
 		resources = append(resources, "rbac/")
 	}
+	if g.Config.Infra.NetworkPolicies {
+		resources = append(resources, "network-policies/")
+	}
+	if g.Config.Infra.ResourceQuotas {
+		resources = append(resources, "resource-quotas/")
+	}
 
 	kustomizeData := map[string]interface{}{
 		"Resources": resources,

@@ -100,4 +100,3 @@ func (g *Generator) generateArgoCD() error {
 
 	return nil
 }
-

@@ -230,4 +230,3 @@ func TestNewWriter(t *testing.T) {
 		})
 	}
 }
-

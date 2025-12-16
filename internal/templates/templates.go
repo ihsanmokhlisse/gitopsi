@@ -49,10 +49,9 @@ func List() ([]string, error) {
 		return nil, err
 	}
 
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
 	return names, nil
 }
-

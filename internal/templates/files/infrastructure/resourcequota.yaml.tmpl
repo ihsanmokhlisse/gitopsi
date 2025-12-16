@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{.Name}}-quota
+  namespace: {{.Namespace}}
+  labels:
+    app.kubernetes.io/name: {{.Name}}
+    app.kubernetes.io/env: {{.Env}}
+spec:
+  hard:
+    requests.cpu: "{{.RequestsCPU}}"
+    requests.memory: "{{.RequestsMemory}}"
+    limits.cpu: "{{.LimitsCPU}}"
+    limits.memory: "{{.LimitsMemory}}"
+    pods: "{{.MaxPods}}"
+    services: "{{.MaxServices}}"
+    configmaps: "{{.MaxConfigMaps}}"
+    secrets: "{{.MaxSecrets}}"
+

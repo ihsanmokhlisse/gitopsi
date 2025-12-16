@@ -6,29 +6,14 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  GO_VERSION: '1.23'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-
   lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,24 +21,466 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: golangci-lint
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "❌ Code is not formatted. Run 'gofmt -w .' to fix:"
+            gofmt -l .
+            exit 1
+          fi
+          echo "✅ Code is properly formatted"
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: latest
+          version: v1.61
+          args: --timeout=5m
 
-  build:
-    runs-on: ubuntu-latest
-    needs: [test, lint]
+  test:
+    name: Unit Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.23']
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ matrix.go }}
 
-      - name: Build
-        run: go build -v ./cmd/gitopsi
+      - name: Download dependencies
+        run: go mod download
 
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run tests with coverage
+        shell: bash
+        run: go test -v -race "-coverprofile=coverage.out" "-covermode=atomic" ./...
+
+      - name: Check coverage threshold
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 60" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below threshold 60%"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% meets threshold"
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
+          echo "DATE=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          LDFLAGS="-s -w \
+            -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Version=${{ steps.version.outputs.VERSION }} \
+            -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Commit=${{ steps.version.outputs.COMMIT }} \
+            -X github.com/ihsanmokhlisse/gitopsi/internal/cli.BuildDate=${{ steps.version.outputs.DATE }}"
+          
+          output="bin/gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}"
+          [ "${{ matrix.goos }}" = "windows" ] && output="${output}.exe"
+          
+          go build -ldflags="$LDFLAGS" -o "$output" ./cmd/gitopsi
+          echo "✅ Built $output"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/gitopsi-*
+          retention-days: 7
+
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Run E2E tests
+        run: |
+          echo "🧪 Running E2E tests..."
+          
+          # Test version command
+          echo "--- Test: Version ---"
+          ./bin/gitopsi-linux-amd64 version
+          
+          # Test help command
+          echo "--- Test: Help ---"
+          ./bin/gitopsi-linux-amd64 --help
+          
+          # Test config file mode
+          echo "--- Test: Config File Mode ---"
+          mkdir -p /tmp/e2e-test
+          cd /tmp/e2e-test
+          
+          cat > test-config.yaml << 'EOF'
+          project:
+            name: e2e-test-project
+            description: "E2E Test"
+          output:
+            type: local
+          platform: kubernetes
+          scope: both
+          gitops_tool: argocd
+          environments:
+            - name: dev
+            - name: prod
+          infrastructure:
+            namespaces: true
+            rbac: true
+            network_policies: true
+            resource_quotas: true
+          docs:
+            readme: true
+            architecture: true
+            onboarding: true
+          EOF
+          
+          $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config test-config.yaml
+          
+          # Verify generated files
+          echo "--- Verifying generated structure ---"
+          test -f e2e-test-project/README.md || (echo "❌ README.md not found" && exit 1)
+          test -f e2e-test-project/docs/ARCHITECTURE.md || (echo "❌ ARCHITECTURE.md not found" && exit 1)
+          test -f e2e-test-project/infrastructure/base/kustomization.yaml || (echo "❌ kustomization.yaml not found" && exit 1)
+          test -f e2e-test-project/infrastructure/base/rbac/dev.yaml || (echo "❌ RBAC not found" && exit 1)
+          test -f e2e-test-project/infrastructure/base/network-policies/dev.yaml || (echo "❌ NetworkPolicy not found" && exit 1)
+          test -f e2e-test-project/infrastructure/base/resource-quotas/dev.yaml || (echo "❌ ResourceQuota not found" && exit 1)
+          test -f e2e-test-project/argocd/projects/infrastructure.yaml || (echo "❌ ArgoCD project not found" && exit 1)
+          test -f e2e-test-project/scripts/bootstrap.sh || (echo "❌ bootstrap.sh not found" && exit 1)
+          
+          # Verify YAML validity
+          echo "--- Validating YAML files ---"
+          find e2e-test-project -name "*.yaml" -exec python3 -c "import yaml; yaml.safe_load(open('{}'))" \;
+          
+          echo "✅ All E2E tests passed!"
+
+      - name: Test dry-run mode
+        run: |
+          cd /tmp/e2e-test
+          rm -rf dry-run-test
+          $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config test-config.yaml --output /tmp/dry-run-test --dry-run
+          # Verify no files were created
+          if [ -d "/tmp/dry-run-test/e2e-test-project" ]; then
+            echo "❌ Dry run created files when it shouldn't have"
+            exit 1
+          fi
+          echo "✅ Dry run mode working correctly"
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          queries: security-and-quality
+
+      - name: Build for CodeQL
+        run: go build ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
+
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          args: -fmt sarif -out gosec-results.sarif ./...
+        continue-on-error: true
+
+      - name: Upload gosec SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+        continue-on-error: true
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "🔍 Scanning for known vulnerabilities..."
+          govulncheck -format json ./... > govulncheck-results.json 2>&1 || true
+          
+          # Parse and display results
+          if [ -f govulncheck-results.json ]; then
+            VULN_COUNT=$(grep -c '"osv":' govulncheck-results.json 2>/dev/null || echo "0")
+            echo "Found ${VULN_COUNT} vulnerability references"
+            if [ "$VULN_COUNT" -gt "0" ]; then
+              echo "⚠️ Vulnerabilities detected - review govulncheck output"
+              govulncheck ./...
+            else
+              echo "✅ No vulnerabilities found in direct code paths"
+            fi
+          fi
+        continue-on-error: true
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-fs
+        continue-on-error: true
+
+      - name: Run nancy for dependency check
+        run: |
+          go install github.com/sonatype-nexus-community/nancy@latest
+          go list -json -deps ./... | nancy sleuth || echo "⚠️ Some dependencies may have vulnerabilities"
+        continue-on-error: true
+
+      - name: Security scan summary
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL | Source Code | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| gosec | Go Security | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| govulncheck | Vulnerabilities | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy | Filesystem | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| nancy | Dependencies | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+
+  container:
+    name: Container Build & Scan
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Containerfile
+          target: runtime
+          load: true
+          tags: gitopsi:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test container
+        run: |
+          docker run --rm gitopsi:test version
+          echo "✅ Container runs correctly"
+
+      - name: Run Trivy container vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'gitopsi:test'
+          format: 'sarif'
+          output: 'trivy-container-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+        continue-on-error: true
+
+      - name: Upload Trivy container SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-container-results.sarif
+          category: trivy-container
+        continue-on-error: true
+
+      - name: Run Trivy container config scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'gitopsi:test'
+          format: 'table'
+          scan-type: 'config'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+
+      - name: Run Grype container scan
+        uses: anchore/scan-action@v4
+        with:
+          image: 'gitopsi:test'
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+        continue-on-error: true
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: grype-container
+        continue-on-error: true
+
+      - name: Check container size
+        run: |
+          SIZE=$(docker image inspect gitopsi:test --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "📦 Container size: ${SIZE_MB}MB"
+          
+          # Get layer count
+          LAYERS=$(docker history gitopsi:test --no-trunc -q | wc -l)
+          echo "📚 Layer count: ${LAYERS}"
+          
+          if [ $SIZE_MB -gt 50 ]; then
+            echo "⚠️ Warning: Container size ${SIZE_MB}MB exceeds 50MB target"
+          else
+            echo "✅ Container size ${SIZE_MB}MB is within target"
+          fi
+
+      - name: Container security summary
+        run: |
+          echo "## 🐳 Container Security Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          SIZE=$(docker image inspect gitopsi:test --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Size | ${SIZE_MB}MB |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Image | distroless/static |" >> $GITHUB_STEP_SUMMARY
+          echo "| User | nonroot |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Grype Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Config Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM (SPDX)
+        run: |
+          syft dir:. -o spdx-json=sbom-spdx.json
+          echo "✅ Generated SPDX SBOM"
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          syft dir:. -o cyclonedx-json=sbom-cyclonedx.json
+          echo "✅ Generated CycloneDX SBOM"
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom-spdx.json
+            sbom-cyclonedx.json
+          retention-days: 30
+
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, e2e-test, security, container, sbom]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "## CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint & Format | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| E2E Tests | ${{ needs.e2e-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | ${{ needs.container.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM | ${{ needs.sbom.result }} |" >> $GITHUB_STEP_SUMMARY

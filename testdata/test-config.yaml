@@ -1,0 +1,31 @@
+project:
+  name: test-platform
+  description: "Test GitOps repository"
+
+output:
+  type: local
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+infrastructure:
+  namespaces: true
+  rbac: true
+
+applications:
+  - name: web-app
+    image: nginx:latest
+    port: 80
+    replicas: 2
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+

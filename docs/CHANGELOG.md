@@ -8,12 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial project structure
-- PRD and competitive analysis documentation
-- GitHub workflows for CI/CD
-- Issue and PR templates
-- GoReleaser configuration
-- Contributing guidelines
+- N/A
 
 ### Changed
 - N/A
@@ -21,16 +16,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - N/A
 
-### Removed
-- N/A
+## [0.1.0] - 2024-12-16
 
-## [0.1.0] - TBD
+### 🚀 Initial Release - MVP Phase 1
+
+First public release of gitopsi, a CLI tool for bootstrapping production-ready GitOps repositories.
 
 ### Added
-- `gitopsi init` command with interactive mode
-- `gitopsi init --config` for config file mode
-- Kubernetes manifest generation
-- ArgoCD Application generation
-- Kustomize base/overlay structure
-- Basic documentation generation
 
+#### CLI & Configuration
+- `gitopsi init` command with interactive mode using Survey library
+- `gitopsi init --config <file>` for YAML configuration file mode
+- `gitopsi init --dry-run` for preview without writing files
+- `gitopsi version` command with build information
+- Multi-platform support: Kubernetes, OpenShift, AKS, EKS
+- Multi-scope support: infrastructure, application, or both
+- GitOps tool support: ArgoCD, Flux, or both
+
+#### Generated Structure
+- Kubernetes manifests (Deployments, Services)
+- Kustomize base/overlay structure per environment
+- ArgoCD resources (AppProject, Application per environment)
+- Infrastructure components:
+  - Namespace manifests
+  - RBAC (Role, RoleBinding)
+  - NetworkPolicies (default deny with allow intra-namespace)
+  - ResourceQuotas (environment-appropriate limits)
+- Bootstrap scripts (`bootstrap.sh`, `validate.sh`)
+- Documentation generation (README, Architecture, Onboarding)
+
+#### Templates
+- 12 embedded templates using Go 1.16+ embed.FS
+- Kubernetes: deployment, service, kustomization
+- Infrastructure: namespace, rbac, networkpolicy, resourcequota
+- ArgoCD: application, project
+- Documentation: README, architecture, onboarding
+
+#### CI/CD Pipeline
+- GitHub Actions workflows for CI and Release
+- Multi-platform testing: Linux, macOS, Windows
+- Security scanning: CodeQL, gosec, govulncheck, Trivy, Grype, nancy
+- Multi-platform builds: linux/darwin/windows × amd64/arm64
+- E2E tests with full generation validation
+- Container build with distroless base, non-root user
+- SBOM generation: SPDX + CycloneDX formats
+- Binary signing with cosign
+- Container image signing with cosign
+
+#### Documentation
+- Comprehensive README with installation and usage
+- Detailed USAGE.md with all configuration options
+- EXAMPLES.md with 15+ real-world configuration examples
+- CONTRIBUTING.md with GitFlow workflow
+- TESTING.md with testing strategy
+
+### Test Coverage
+| Package | Coverage |
+|---------|----------|
+| internal/cli | 81.2% |
+| internal/config | 97.1% |
+| internal/generator | 78.0% |
+| internal/output | 87.0% |
+| internal/prompt | 91.2% |
+| internal/templates | 83.3% |
+
+### Platforms
+- **Container**: `ghcr.io/ihsanmokhlisse/gitopsi:0.1.0`
+- **Homebrew**: `brew install ihsanmokhlisse/tap/gitopsi`
+- **Binaries**: Linux, macOS, Windows (amd64, arm64)
+- **Packages**: deb, rpm, apk
+
+### Closed Issues
+- #1 CLI structure with Cobra
+- #2 Config file parsing with Viper
+- #3 Interactive prompts with Survey
+- #4 Init command implementation
+- #5 Kubernetes manifest generation
+- #6 Kustomize base/overlay structure
+- #7 ArgoCD Application generation
+- #8 Template embedding with embed.FS
+- #9 File output system
+- #10 README.md generation
+- #11 Unit tests (>80% coverage)
+
+---
+
+[Unreleased]: https://github.com/ihsanmokhlisse/gitopsi/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ihsanmokhlisse/gitopsi/releases/tag/v0.1.0

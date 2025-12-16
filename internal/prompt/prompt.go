@@ -5,7 +5,28 @@ import (
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 )
 
+type Prompter interface {
+	Ask(qs []*survey.Question, response interface{}) error
+	AskOne(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error
+}
+
+type SurveyPrompter struct{}
+
+func (s *SurveyPrompter) Ask(qs []*survey.Question, response interface{}) error {
+	return survey.Ask(qs, response)
+}
+
+func (s *SurveyPrompter) AskOne(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	return survey.AskOne(p, response, opts...)
+}
+
+var DefaultPrompter Prompter = &SurveyPrompter{}
+
 func Run() (*config.Config, error) {
+	return RunWith(DefaultPrompter)
+}
+
+func RunWith(p Prompter) (*config.Config, error) {
 	cfg := config.NewDefaultConfig()
 
 	questions := []*survey.Question{
@@ -59,7 +80,7 @@ func Run() (*config.Config, error) {
 		OutputType  string
 	}{}
 
-	if err := survey.Ask(questions, &answers); err != nil {
+	if err := p.Ask(questions, &answers); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +95,7 @@ func Run() (*config.Config, error) {
 		prompt := &survey.Input{
 			Message: "Git repository URL:",
 		}
-		if err := survey.AskOne(prompt, &gitURL, survey.WithValidator(survey.Required)); err != nil {
+		if err := p.AskOne(prompt, &gitURL, survey.WithValidator(survey.Required)); err != nil {
 			return nil, err
 		}
 		cfg.Output.URL = gitURL
@@ -86,7 +107,7 @@ func Run() (*config.Config, error) {
 		Options: []string{"dev", "staging", "qa", "prod"},
 		Default: []string{"dev", "staging", "prod"},
 	}
-	if err := survey.AskOne(envPrompt, &envNames); err != nil {
+	if err := p.AskOne(envPrompt, &envNames); err != nil {
 		return nil, err
 	}
 
@@ -100,7 +121,7 @@ func Run() (*config.Config, error) {
 		Message: "Generate documentation?",
 		Default: true,
 	}
-	if err := survey.AskOne(docsPrompt, &generateDocs); err != nil {
+	if err := p.AskOne(docsPrompt, &generateDocs); err != nil {
 		return nil, err
 	}
 	cfg.Docs.Readme = generateDocs
@@ -109,4 +130,3 @@ func Run() (*config.Config, error) {
 
 	return cfg, nil
 }
-

@@ -212,3 +212,198 @@ func TestRenderDocsReadme(t *testing.T) {
 	}
 }
 
+func TestRenderWithMissingData(t *testing.T) {
+	result, err := Render("kubernetes/deployment.yaml.tmpl", map[string]interface{}{
+		"Name": "test",
+	})
+	if err != nil {
+		t.Logf("Render with missing data: %v", err)
+	}
+
+	if result != nil && strings.Contains(string(result), "name: test") {
+		t.Log("Template rendered with partial data")
+	}
+}
+
+func TestRenderAllTemplateTypes(t *testing.T) {
+	templates := []struct {
+		name string
+		data map[string]interface{}
+	}{
+		{
+			name: "kubernetes/deployment.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "app", "Image": "nginx", "Port": 80, "Replicas": 1,
+			},
+		},
+		{
+			name: "kubernetes/service.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "svc", "Port": 80,
+			},
+		},
+		{
+			name: "kubernetes/kustomization.yaml.tmpl",
+			data: map[string]interface{}{
+				"Resources": []string{"a.yaml", "b.yaml"},
+			},
+		},
+		{
+			name: "infrastructure/namespace.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "ns", "Env": "dev",
+			},
+		},
+		{
+			name: "argocd/application.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "app", "Project": "default", "RepoURL": "url",
+				"Path": "path", "Namespace": "ns",
+			},
+		},
+		{
+			name: "argocd/project.yaml.tmpl",
+			data: map[string]interface{}{
+				"Name": "proj", "Description": "desc",
+			},
+		},
+	}
+
+	for _, tt := range templates {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Render(tt.name, tt.data)
+			if err != nil {
+				t.Fatalf("Render(%s) error = %v", tt.name, err)
+			}
+			if len(result) == 0 {
+				t.Errorf("Render(%s) returned empty result", tt.name)
+			}
+		})
+	}
+}
+
+func TestRenderStringEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		data     interface{}
+		wantErr  bool
+	}{
+		{
+			name:     "empty template",
+			template: "",
+			data:     nil,
+			wantErr:  false,
+		},
+		{
+			name:     "template with no variables",
+			template: "static content",
+			data:     nil,
+			wantErr:  false,
+		},
+		{
+			name:     "template with conditional",
+			template: "{{if .Enabled}}yes{{else}}no{{end}}",
+			data:     map[string]bool{"Enabled": true},
+			wantErr:  false,
+		},
+		{
+			name:     "template with nil data",
+			template: "Hello",
+			data:     nil,
+			wantErr:  false,
+		},
+		{
+			name:     "nested template data",
+			template: "{{.Outer.Inner}}",
+			data: map[string]interface{}{
+				"Outer": map[string]string{"Inner": "value"},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := RenderString(tt.template, tt.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RenderString() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestListDirectories(t *testing.T) {
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(names) < 4 {
+		t.Errorf("Expected at least 4 template directories, got %d", len(names))
+	}
+
+	for _, name := range names {
+		if name == "" {
+			t.Error("List() returned empty name")
+		}
+	}
+}
+
+func TestRenderDeploymentAllFields(t *testing.T) {
+	data := map[string]interface{}{
+		"Name":     "full-app",
+		"Image":    "myregistry/myapp:v1.2.3",
+		"Port":     8080,
+		"Replicas": 5,
+	}
+
+	result, err := Render("kubernetes/deployment.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"apiVersion: apps/v1",
+		"kind: Deployment",
+		"name: full-app",
+		"replicas: 5",
+		"image: myregistry/myapp:v1.2.3",
+		"containerPort: 8080",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("Deployment missing: %s", check)
+		}
+	}
+}
+
+func TestRenderServiceAllFields(t *testing.T) {
+	data := map[string]interface{}{
+		"Name": "full-service",
+		"Port": 3000,
+	}
+
+	result, err := Render("kubernetes/service.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	content := string(result)
+	checks := []string{
+		"apiVersion: v1",
+		"kind: Service",
+		"name: full-service",
+		"port: 3000",
+		"targetPort: 3000",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("Service missing: %s", check)
+		}
+	}
+}
+

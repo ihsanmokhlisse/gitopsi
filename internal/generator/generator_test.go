@@ -594,3 +594,512 @@ func TestGenerateEmptyApps(t *testing.T) {
 	}
 }
 
+func TestGenerateMultipleApps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-apps"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+		},
+		Apps: []config.Application{
+			{Name: "frontend", Image: "nginx:latest", Port: 80, Replicas: 2},
+			{Name: "backend", Image: "node:18", Port: 3000, Replicas: 3},
+			{Name: "api", Image: "python:3.11", Port: 8000, Replicas: 2},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	for _, app := range cfg.Apps {
+		appPath := filepath.Join(tmpDir, "multi-apps/applications/base", app.Name)
+		if _, err := os.Stat(appPath); os.IsNotExist(err) {
+			t.Errorf("App directory not created: %s", app.Name)
+		}
+
+		deployPath := filepath.Join(appPath, "deployment.yaml")
+		if _, err := os.Stat(deployPath); os.IsNotExist(err) {
+			t.Errorf("Deployment not created for: %s", app.Name)
+		}
+	}
+}
+
+func TestGenerateMultipleEnvironments(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev", Cluster: "https://dev.k8s.local"},
+			{Name: "qa", Cluster: "https://qa.k8s.local"},
+			{Name: "staging", Cluster: "https://staging.k8s.local"},
+			{Name: "prod", Cluster: "https://prod.k8s.local"},
+		},
+		Apps: []config.Application{
+			{Name: "app", Image: "app:v1", Port: 80, Replicas: 1},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	for _, env := range cfg.Environments {
+		infraOverlay := filepath.Join(tmpDir, "multi-env/infrastructure/overlays", env.Name)
+		if _, err := os.Stat(infraOverlay); os.IsNotExist(err) {
+			t.Errorf("Infrastructure overlay not created for: %s", env.Name)
+		}
+
+		appOverlay := filepath.Join(tmpDir, "multi-env/applications/overlays", env.Name)
+		if _, err := os.Stat(appOverlay); os.IsNotExist(err) {
+			t.Errorf("Application overlay not created for: %s", env.Name)
+		}
+	}
+}
+
+func TestGenerateWithGitURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "git-url-test"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output: config.Output{
+			Type:   "git",
+			URL:    "https://github.com/myorg/myrepo.git",
+			Branch: "main",
+		},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	appFile := filepath.Join(tmpDir, "git-url-test/argocd/applicationsets/apps-dev.yaml")
+	content, err := os.ReadFile(appFile)
+	if err != nil {
+		t.Fatalf("Failed to read ArgoCD app: %v", err)
+	}
+
+	if !strings.Contains(string(content), "https://github.com/myorg/myrepo.git") {
+		t.Error("ArgoCD application should contain the git URL")
+	}
+}
+
+func TestGenerateInfrastructureContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "infra-content"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateInfrastructure()
+	if err != nil {
+		t.Fatalf("generateInfrastructure() error = %v", err)
+	}
+
+	nsFile := filepath.Join(tmpDir, "infra-content/infrastructure/base/namespaces/dev.yaml")
+	content, err := os.ReadFile(nsFile)
+	if err != nil {
+		t.Fatalf("Failed to read namespace file: %v", err)
+	}
+
+	checks := []string{
+		"apiVersion: v1",
+		"kind: Namespace",
+		"name: infra-content-dev",
+		"env: dev",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("Namespace file missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateApplicationsContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "apps-content"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Apps: []config.Application{
+			{Name: "myapp", Image: "myregistry/myapp:v1", Port: 9000, Replicas: 4},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateApplications()
+	if err != nil {
+		t.Fatalf("generateApplications() error = %v", err)
+	}
+
+	deployFile := filepath.Join(tmpDir, "apps-content/applications/base/myapp/deployment.yaml")
+	content, err := os.ReadFile(deployFile)
+	if err != nil {
+		t.Fatalf("Failed to read deployment: %v", err)
+	}
+
+	checks := []string{
+		"name: myapp",
+		"image: myregistry/myapp:v1",
+		"containerPort: 9000",
+		"replicas: 4",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(string(content), check) {
+			t.Errorf("Deployment missing: %s", check)
+		}
+	}
+
+	svcFile := filepath.Join(tmpDir, "apps-content/applications/base/myapp/service.yaml")
+	svcContent, err := os.ReadFile(svcFile)
+	if err != nil {
+		t.Fatalf("Failed to read service: %v", err)
+	}
+
+	if !strings.Contains(string(svcContent), "port: 9000") {
+		t.Error("Service should have port 9000")
+	}
+}
+
+func TestGeneratorConfigFields(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "test"
+
+	writer := output.New("/tmp", true, true)
+	gen := New(cfg, writer, true)
+
+	if gen.Config != cfg {
+		t.Error("Config not set correctly")
+	}
+	if gen.Writer != writer {
+		t.Error("Writer not set correctly")
+	}
+	if !gen.Verbose {
+		t.Error("Verbose not set correctly")
+	}
+}
+
+func TestGenerateAllPlatforms(t *testing.T) {
+	platforms := []string{"kubernetes", "openshift", "aks", "eks"}
+
+	for _, platform := range platforms {
+		t.Run(platform, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: "platform-" + platform},
+				Platform:   platform,
+				Scope:      "both",
+				GitOpsTool: "argocd",
+				Output:     config.Output{Type: "local"},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Docs: config.Documentation{Readme: true},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Generate() for %s error = %v", platform, err)
+			}
+		})
+	}
+}
+
+func TestGenerateAllScopes(t *testing.T) {
+	scopes := []string{"infrastructure", "application", "both"}
+
+	for _, scope := range scopes {
+		t.Run(scope, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: "scope-" + scope},
+				Platform:   "kubernetes",
+				Scope:      scope,
+				GitOpsTool: "argocd",
+				Output:     config.Output{Type: "local"},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Apps: []config.Application{
+					{Name: "app", Image: "nginx", Port: 80, Replicas: 1},
+				},
+				Docs: config.Documentation{Readme: true},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Generate() for scope %s error = %v", scope, err)
+			}
+		})
+	}
+}
+
+func TestGenerateFluxTool(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "flux-test"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "flux",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() with flux error = %v", err)
+	}
+
+	fluxDir := filepath.Join(tmpDir, "flux-test/flux")
+	if _, err := os.Stat(fluxDir); os.IsNotExist(err) {
+		t.Error("Flux directory not created")
+	}
+}
+
+func TestGenerateBothTools(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "both-tools"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "both",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() with both tools error = %v", err)
+	}
+}
+
+func TestGenerateWithAllDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "full-docs",
+			Description: "Project with all documentation",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{
+			Readme:       true,
+			Architecture: true,
+			Onboarding:   true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	readmePath := filepath.Join(tmpDir, "full-docs/README.md")
+	if _, err := os.Stat(readmePath); os.IsNotExist(err) {
+		t.Error("README.md not created")
+	}
+}
+
+func TestGenerateWithVerboseOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "verbose-gen"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Apps: []config.Application{
+			{Name: "app", Image: "nginx", Port: 80, Replicas: 1},
+		},
+		Docs: config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, true)
+	gen := New(cfg, writer, true)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate() with verbose error = %v", err)
+	}
+}
+
+func TestGenerateStructureCreatesAllDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "structure-test"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.generateStructure()
+	if err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	expectedDirs := []string{
+		"structure-test",
+		"structure-test/docs",
+		"structure-test/bootstrap/argocd",
+		"structure-test/scripts",
+		"structure-test/infrastructure/base",
+		"structure-test/infrastructure/base/namespaces",
+		"structure-test/infrastructure/base/rbac",
+		"structure-test/infrastructure/overlays/dev",
+		"structure-test/infrastructure/overlays/prod",
+		"structure-test/applications/base",
+		"structure-test/applications/overlays/dev",
+		"structure-test/applications/overlays/prod",
+		"structure-test/argocd/projects",
+		"structure-test/argocd/applicationsets",
+	}
+
+	for _, dir := range expectedDirs {
+		fullPath := filepath.Join(tmpDir, dir)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Directory not created: %s", dir)
+		}
+	}
+}
+
+func TestGenerateGitOpsForAllTools(t *testing.T) {
+	tools := []string{"argocd", "flux"}
+
+	for _, tool := range tools {
+		t.Run(tool, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: "gitops-" + tool},
+				Platform:   "kubernetes",
+				Scope:      "both",
+				GitOpsTool: tool,
+				Output:     config.Output{URL: "https://github.com/test/repo.git"},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			if err := gen.generateStructure(); err != nil {
+				t.Fatalf("generateStructure() error = %v", err)
+			}
+
+			err := gen.generateGitOps()
+			if err != nil {
+				t.Fatalf("generateGitOps() for %s error = %v", tool, err)
+			}
+
+			toolDir := filepath.Join(tmpDir, "gitops-"+tool, tool)
+			if _, err := os.Stat(toolDir); os.IsNotExist(err) {
+				t.Errorf("%s directory not created", tool)
+			}
+		})
+	}
+}
+

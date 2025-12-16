@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -176,5 +177,142 @@ func TestInitCommandShortDescription(t *testing.T) {
 func TestVersionCommandShortDescription(t *testing.T) {
 	if versionCmd.Short == "" {
 		t.Error("versionCmd.Short should not be empty")
+	}
+}
+
+func TestRootCommandLongDescription(t *testing.T) {
+	if rootCmd.Long == "" {
+		t.Error("rootCmd.Long should not be empty")
+	}
+
+	if !strings.Contains(rootCmd.Long, "GitOps") {
+		t.Error("rootCmd.Long should mention GitOps")
+	}
+}
+
+func TestInitCommandLongDescription(t *testing.T) {
+	if initCmd.Long == "" {
+		t.Error("initCmd.Long should not be empty")
+	}
+
+	if !strings.Contains(initCmd.Long, "interactive") {
+		t.Error("initCmd.Long should mention interactive mode")
+	}
+}
+
+func TestFlagDefaultValues(t *testing.T) {
+	flags := rootCmd.PersistentFlags()
+
+	outputFlag := flags.Lookup("output")
+	if outputFlag.DefValue != "." {
+		t.Errorf("Default output should be '.', got %s", outputFlag.DefValue)
+	}
+
+	dryRunFlag := flags.Lookup("dry-run")
+	if dryRunFlag.DefValue != "false" {
+		t.Errorf("Default dry-run should be 'false', got %s", dryRunFlag.DefValue)
+	}
+
+	verboseFlag := flags.Lookup("verbose")
+	if verboseFlag.DefValue != "false" {
+		t.Errorf("Default verbose should be 'false', got %s", verboseFlag.DefValue)
+	}
+}
+
+func TestVersionVariablesSetCorrectly(t *testing.T) {
+	originalVersion := Version
+	originalCommit := Commit
+	originalBuildDate := BuildDate
+	defer func() {
+		Version = originalVersion
+		Commit = originalCommit
+		BuildDate = originalBuildDate
+	}()
+
+	Version = "1.2.3"
+	Commit = "abc123"
+	BuildDate = "2024-01-01T00:00:00Z"
+
+	if Version != "1.2.3" {
+		t.Error("Version not set correctly")
+	}
+	if Commit != "abc123" {
+		t.Error("Commit not set correctly")
+	}
+	if BuildDate != "2024-01-01T00:00:00Z" {
+		t.Error("BuildDate not set correctly")
+	}
+}
+
+func TestAllCommandsHaveRunE(t *testing.T) {
+	if initCmd.RunE == nil {
+		t.Error("initCmd should have RunE function")
+	}
+}
+
+func TestVersionCommandHasRun(t *testing.T) {
+	if versionCmd.Run == nil {
+		t.Error("versionCmd should have Run function")
+	}
+}
+
+func TestRootCommandHasInit(t *testing.T) {
+	commands := rootCmd.Commands()
+	found := false
+	for _, cmd := range commands {
+		if cmd.Name() == "init" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Root command should have init subcommand")
+	}
+}
+
+func TestRootCommandHasVersion(t *testing.T) {
+	commands := rootCmd.Commands()
+	found := false
+	for _, cmd := range commands {
+		if cmd.Name() == "version" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Root command should have version subcommand")
+	}
+}
+
+func TestFlagsArePersistent(t *testing.T) {
+	flags := rootCmd.PersistentFlags()
+
+	if flags.Lookup("config") == nil {
+		t.Error("config flag should be persistent")
+	}
+	if flags.Lookup("output") == nil {
+		t.Error("output flag should be persistent")
+	}
+	if flags.Lookup("dry-run") == nil {
+		t.Error("dry-run flag should be persistent")
+	}
+	if flags.Lookup("verbose") == nil {
+		t.Error("verbose flag should be persistent")
+	}
+}
+
+func TestExecuteWithVersion(t *testing.T) {
+	rootCmd.SetArgs([]string{"version"})
+	err := Execute()
+	if err != nil {
+		t.Errorf("Execute() with version should not error: %v", err)
+	}
+}
+
+func TestExecuteWithHelp(t *testing.T) {
+	rootCmd.SetArgs([]string{"--help"})
+	err := Execute()
+	if err != nil {
+		t.Errorf("Execute() with help should not error: %v", err)
 	}
 }

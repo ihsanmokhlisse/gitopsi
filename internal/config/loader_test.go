@@ -93,3 +93,103 @@ func TestSave(t *testing.T) {
 	}
 }
 
+func TestSaveToInvalidPath(t *testing.T) {
+	cfg := &Config{
+		Project: Project{Name: "test"},
+	}
+
+	err := Save(cfg, "/nonexistent/directory/config.yaml")
+	if err == nil {
+		t.Error("Save() should fail for invalid path")
+	}
+}
+
+func TestSaveCompleteConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "complete.yaml")
+
+	cfg := &Config{
+		Project: Project{
+			Name:        "complete-project",
+			Description: "A complete test project",
+		},
+		Platform:   "eks",
+		Scope:      "both",
+		GitOpsTool: "both",
+		Output: Output{
+			Type:   "git",
+			URL:    "https://github.com/test/repo.git",
+			Branch: "main",
+		},
+		Environments: []Environment{
+			{Name: "dev", Cluster: "https://dev.k8s"},
+			{Name: "prod", Cluster: "https://prod.k8s"},
+		},
+		Infra: Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+		Apps: []Application{
+			{Name: "api", Image: "api:v1", Port: 8080, Replicas: 3},
+			{Name: "web", Image: "web:v1", Port: 80, Replicas: 2},
+		},
+		Docs: Documentation{
+			Readme:       true,
+			Architecture: true,
+			Onboarding:   true,
+		},
+	}
+
+	if err := Save(cfg, configPath); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if loaded.Platform != cfg.Platform {
+		t.Errorf("Platform mismatch: %s vs %s", loaded.Platform, cfg.Platform)
+	}
+	if loaded.Output.URL != cfg.Output.URL {
+		t.Errorf("Output URL mismatch: %s vs %s", loaded.Output.URL, cfg.Output.URL)
+	}
+	if len(loaded.Apps) != len(cfg.Apps) {
+		t.Errorf("Apps count mismatch: %d vs %d", len(loaded.Apps), len(cfg.Apps))
+	}
+}
+
+func TestLoadPartialConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "partial.yaml")
+
+	content := `
+project:
+  name: partial-project
+platform: kubernetes
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Project.Name != "partial-project" {
+		t.Error("Project name not loaded")
+	}
+
+	if cfg.Scope != "both" {
+		t.Error("Default scope not applied")
+	}
+
+	if cfg.GitOpsTool != "argocd" {
+		t.Error("Default gitops tool not applied")
+	}
+}
+

@@ -28,6 +28,7 @@ func TestModeConstants(t *testing.T) {
 		{ModeHelm, "helm"},
 		{ModeOLM, "olm"},
 		{ModeManifest, "manifest"},
+		{ModeKustomize, "kustomize"},
 	}
 
 	for _, tt := range tests {
@@ -248,5 +249,350 @@ func TestResult_Fields(t *testing.T) {
 	}
 	if result.Message != "ArgoCD installed successfully" {
 		t.Errorf("Message = %v, want 'ArgoCD installed successfully'", result.Message)
+	}
+}
+
+func TestValidModes(t *testing.T) {
+	tests := []struct {
+		name          string
+		tool          Tool
+		platform      string
+		expectedModes []Mode
+		includesOLM   bool
+	}{
+		{
+			name:          "ArgoCD on OpenShift includes OLM",
+			tool:          ToolArgoCD,
+			platform:      "openshift",
+			expectedModes: []Mode{ModeHelm, ModeManifest, ModeKustomize, ModeOLM},
+			includesOLM:   true,
+		},
+		{
+			name:          "ArgoCD on Kubernetes excludes OLM",
+			tool:          ToolArgoCD,
+			platform:      "kubernetes",
+			expectedModes: []Mode{ModeHelm, ModeManifest, ModeKustomize},
+			includesOLM:   false,
+		},
+		{
+			name:          "Flux on OpenShift excludes OLM",
+			tool:          ToolFlux,
+			platform:      "openshift",
+			expectedModes: []Mode{ModeHelm, ModeManifest, ModeKustomize},
+			includesOLM:   false,
+		},
+		{
+			name:          "ArgoCD on EKS excludes OLM",
+			tool:          ToolArgoCD,
+			platform:      "eks",
+			expectedModes: []Mode{ModeHelm, ModeManifest, ModeKustomize},
+			includesOLM:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modes := ValidModes(tt.tool, tt.platform)
+
+			hasOLM := false
+			for _, m := range modes {
+				if m == ModeOLM {
+					hasOLM = true
+					break
+				}
+			}
+
+			if hasOLM != tt.includesOLM {
+				t.Errorf("ValidModes() OLM presence = %v, want %v", hasOLM, tt.includesOLM)
+			}
+
+			if len(modes) < 3 {
+				t.Errorf("Expected at least 3 modes, got %d", len(modes))
+			}
+		})
+	}
+}
+
+func TestSuggestMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     Tool
+		platform string
+		want     Mode
+	}{
+		{
+			name:     "ArgoCD on OpenShift suggests OLM",
+			tool:     ToolArgoCD,
+			platform: "openshift",
+			want:     ModeOLM,
+		},
+		{
+			name:     "Flux on OpenShift suggests Helm",
+			tool:     ToolFlux,
+			platform: "openshift",
+			want:     ModeHelm,
+		},
+		{
+			name:     "ArgoCD on EKS suggests Helm",
+			tool:     ToolArgoCD,
+			platform: "eks",
+			want:     ModeHelm,
+		},
+		{
+			name:     "ArgoCD on AKS suggests Helm",
+			tool:     ToolArgoCD,
+			platform: "aks",
+			want:     ModeHelm,
+		},
+		{
+			name:     "ArgoCD on Kubernetes suggests Helm",
+			tool:     ToolArgoCD,
+			platform: "kubernetes",
+			want:     ModeHelm,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SuggestMode(tt.tool, tt.platform)
+			if got != tt.want {
+				t.Errorf("SuggestMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     Mode
+		tool     Tool
+		platform string
+		want     bool
+	}{
+		{
+			name:     "Helm is valid for ArgoCD on Kubernetes",
+			mode:     ModeHelm,
+			tool:     ToolArgoCD,
+			platform: "kubernetes",
+			want:     true,
+		},
+		{
+			name:     "OLM is valid for ArgoCD on OpenShift",
+			mode:     ModeOLM,
+			tool:     ToolArgoCD,
+			platform: "openshift",
+			want:     true,
+		},
+		{
+			name:     "OLM is not valid for ArgoCD on Kubernetes",
+			mode:     ModeOLM,
+			tool:     ToolArgoCD,
+			platform: "kubernetes",
+			want:     false,
+		},
+		{
+			name:     "Kustomize is valid for Flux",
+			mode:     ModeKustomize,
+			tool:     ToolFlux,
+			platform: "kubernetes",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsValidMode(tt.mode, tt.tool, tt.platform)
+			if got != tt.want {
+				t.Errorf("IsValidMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModeDescription(t *testing.T) {
+	tests := []struct {
+		mode Mode
+	}{
+		{ModeHelm},
+		{ModeOLM},
+		{ModeManifest},
+		{ModeKustomize},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			desc := ModeDescription(tt.mode)
+			if desc == "" {
+				t.Errorf("ModeDescription(%s) returned empty string", tt.mode)
+			}
+			if desc == string(tt.mode) && tt.mode != "" {
+				t.Errorf("ModeDescription(%s) returned just the mode name", tt.mode)
+			}
+		})
+	}
+}
+
+func TestDefaultHelmConfig(t *testing.T) {
+	tests := []struct {
+		tool          Tool
+		expectedRepo  string
+		expectedChart string
+	}{
+		{
+			tool:          ToolArgoCD,
+			expectedRepo:  "https://argoproj.github.io/argo-helm",
+			expectedChart: "argo-cd",
+		},
+		{
+			tool:          ToolFlux,
+			expectedRepo:  "https://fluxcd-community.github.io/helm-charts",
+			expectedChart: "flux2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.tool), func(t *testing.T) {
+			cfg := DefaultHelmConfig(tt.tool)
+			if cfg == nil {
+				t.Fatal("DefaultHelmConfig returned nil")
+			}
+			if cfg.Repo != tt.expectedRepo {
+				t.Errorf("Repo = %v, want %v", cfg.Repo, tt.expectedRepo)
+			}
+			if cfg.Chart != tt.expectedChart {
+				t.Errorf("Chart = %v, want %v", cfg.Chart, tt.expectedChart)
+			}
+		})
+	}
+}
+
+func TestDefaultOLMConfig(t *testing.T) {
+	cfg := DefaultOLMConfig()
+	if cfg == nil {
+		t.Fatal("DefaultOLMConfig returned nil")
+	}
+	if cfg.Channel == "" {
+		t.Error("Channel should not be empty")
+	}
+	if cfg.Source == "" {
+		t.Error("Source should not be empty")
+	}
+	if cfg.SourceNamespace == "" {
+		t.Error("SourceNamespace should not be empty")
+	}
+	if cfg.Approval == "" {
+		t.Error("Approval should not be empty")
+	}
+}
+
+func TestGetMode_AllModes(t *testing.T) {
+	tests := []struct {
+		name string
+		mode Mode
+	}{
+		{"helm mode", ModeHelm},
+		{"olm mode", ModeOLM},
+		{"manifest mode", ModeManifest},
+		{"kustomize mode", ModeKustomize},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := New(nil, &Options{
+				Tool: ToolArgoCD,
+				Mode: tt.mode,
+			})
+
+			if b.GetMode() != tt.mode {
+				t.Errorf("GetMode() = %v, want %v", b.GetMode(), tt.mode)
+			}
+		})
+	}
+}
+
+func TestHelmConfig_Fields(t *testing.T) {
+	cfg := &HelmConfig{
+		Repo:    "https://charts.example.com",
+		Chart:   "my-chart",
+		Version: "1.0.0",
+		Values:  map[string]any{"key": "value"},
+		SetValues: map[string]string{
+			"image.tag": "latest",
+		},
+	}
+
+	if cfg.Repo != "https://charts.example.com" {
+		t.Errorf("Repo = %v, want https://charts.example.com", cfg.Repo)
+	}
+	if cfg.Chart != "my-chart" {
+		t.Errorf("Chart = %v, want my-chart", cfg.Chart)
+	}
+	if cfg.Version != "1.0.0" {
+		t.Errorf("Version = %v, want 1.0.0", cfg.Version)
+	}
+	if cfg.Values["key"] != "value" {
+		t.Errorf("Values[key] = %v, want value", cfg.Values["key"])
+	}
+	if cfg.SetValues["image.tag"] != "latest" {
+		t.Errorf("SetValues[image.tag] = %v, want latest", cfg.SetValues["image.tag"])
+	}
+}
+
+func TestOLMConfig_Fields(t *testing.T) {
+	cfg := &OLMConfig{
+		Channel:         "stable",
+		Source:          "community-operators",
+		SourceNamespace: "openshift-marketplace",
+		Approval:        "Manual",
+	}
+
+	if cfg.Channel != "stable" {
+		t.Errorf("Channel = %v, want stable", cfg.Channel)
+	}
+	if cfg.Source != "community-operators" {
+		t.Errorf("Source = %v, want community-operators", cfg.Source)
+	}
+	if cfg.SourceNamespace != "openshift-marketplace" {
+		t.Errorf("SourceNamespace = %v, want openshift-marketplace", cfg.SourceNamespace)
+	}
+	if cfg.Approval != "Manual" {
+		t.Errorf("Approval = %v, want Manual", cfg.Approval)
+	}
+}
+
+func TestKustomizeConfig_Fields(t *testing.T) {
+	cfg := &KustomizeConfig{
+		URL:     "https://github.com/example/repo/manifests",
+		Path:    "overlays/prod",
+		Patches: []string{"patch1.yaml", "patch2.yaml"},
+	}
+
+	if cfg.URL != "https://github.com/example/repo/manifests" {
+		t.Errorf("URL = %v, want https://github.com/example/repo/manifests", cfg.URL)
+	}
+	if cfg.Path != "overlays/prod" {
+		t.Errorf("Path = %v, want overlays/prod", cfg.Path)
+	}
+	if len(cfg.Patches) != 2 {
+		t.Errorf("Patches length = %v, want 2", len(cfg.Patches))
+	}
+}
+
+func TestManifestConfig_Fields(t *testing.T) {
+	cfg := &ManifestConfig{
+		URL:       "https://raw.github.com/example/install.yaml",
+		Paths:     []string{"/path/to/manifest1.yaml", "/path/to/manifest2.yaml"},
+		Namespace: "custom-ns",
+	}
+
+	if cfg.URL != "https://raw.github.com/example/install.yaml" {
+		t.Errorf("URL = %v, want https://raw.github.com/example/install.yaml", cfg.URL)
+	}
+	if len(cfg.Paths) != 2 {
+		t.Errorf("Paths length = %v, want 2", len(cfg.Paths))
+	}
+	if cfg.Namespace != "custom-ns" {
+		t.Errorf("Namespace = %v, want custom-ns", cfg.Namespace)
 	}
 }

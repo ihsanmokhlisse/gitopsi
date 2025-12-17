@@ -416,6 +416,10 @@ func (b *BitbucketProvider) getGitEnv() []string {
 	return env
 }
 
+func (b *BitbucketProvider) GetInstance() string {
+	return "bitbucket.org"
+}
+
 func (b *BitbucketProvider) GetUsername() string {
 	return b.username
 }

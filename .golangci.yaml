@@ -170,6 +170,21 @@ issues:
         - errcheck
       text: "CombinedOutput"
 
+    - path: internal/validate/
+      linters:
+        - errcheck
+      text: "CombinedOutput"
+
+    - path: internal/validate/
+      linters:
+        - errcheck
+      text: "findManifests"
+
+    - path: internal/validate/
+      linters:
+        - errcheck
+      text: "filepath.Walk"
+
 severity:
   default-severity: warning
   rules:

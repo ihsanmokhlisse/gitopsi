@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,18 +19,21 @@ import (
 	outputpkg "github.com/ihsanmokhlisse/gitopsi/internal/output"
 	"github.com/ihsanmokhlisse/gitopsi/internal/progress"
 	"github.com/ihsanmokhlisse/gitopsi/internal/prompt"
+	"github.com/ihsanmokhlisse/gitopsi/internal/validate"
 )
 
 var (
-	gitURL        string
-	gitToken      string
-	pushAfterInit bool
-	clusterURL    string
-	clusterToken  string
-	bootstrapFlag bool
-	bootstrapMode string
-	quietMode     bool
-	jsonMode      bool
+	gitURL            string
+	gitToken          string
+	pushAfterInit     bool
+	clusterURL        string
+	clusterToken      string
+	bootstrapFlag     bool
+	bootstrapMode     string
+	quietMode         bool
+	jsonMode          bool
+	validateAfterInit bool
+	validateFailOn    string
 )
 
 var initCmd = &cobra.Command{
@@ -62,6 +66,8 @@ func init() {
 	initCmd.Flags().StringVar(&bootstrapMode, "bootstrap-mode", "helm", "Bootstrap mode: helm, olm, manifest")
 	initCmd.Flags().BoolVar(&quietMode, "quiet", false, "Minimal output")
 	initCmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON")
+	initCmd.Flags().BoolVar(&validateAfterInit, "validate", false, "Validate generated manifests")
+	initCmd.Flags().StringVar(&validateFailOn, "fail-on", "high", "Fail on severity: critical, high, medium, low")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -187,6 +193,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	step.AddSubStep(cfg.GitOpsTool+"/", progress.StatusSuccess)
 	step.AddSubStep("docs/", progress.StatusSuccess)
 	prog.ShowSubSteps(step)
+
+	if validateAfterInit {
+		if valErr := runPostInitValidation(ctx, prog, absOutput); valErr != nil {
+			return valErr
+		}
+	}
 
 	if dryRun {
 		if !quietMode && !jsonMode {
@@ -474,5 +486,68 @@ func runGitCommand(ctx context.Context, dir string, args ...string) error {
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", args[0], err, string(output))
 	}
+	return nil
+}
+
+func runPostInitValidation(ctx context.Context, prog *progress.Progress, projectPath string) error {
+	valSection := prog.StartSection("Validation")
+
+	opts := &validate.Options{
+		Path:         projectPath,
+		K8sVersion:   "1.29",
+		Schema:       true,
+		Security:     true,
+		Deprecation:  true,
+		Kustomize:    true,
+		OutputFormat: "table",
+	}
+
+	switch strings.ToLower(validateFailOn) {
+	case "critical":
+		opts.FailOn = validate.SeverityCritical
+	case "high":
+		opts.FailOn = validate.SeverityHigh
+	case "medium":
+		opts.FailOn = validate.SeverityMedium
+	case "low":
+		opts.FailOn = validate.SeverityLow
+	default:
+		opts.FailOn = validate.SeverityHigh
+	}
+
+	v := validate.New(opts)
+
+	step := prog.StartStep(valSection, "Validating generated manifests...")
+	result, err := v.Validate(ctx)
+	if err != nil {
+		prog.FailStep(valSection, step, err)
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	step.AddSubStep(fmt.Sprintf("Schema: %d passed", result.Categories[validate.CategorySchema].Passed), progress.StatusSuccess)
+	if len(result.Categories[validate.CategorySecurity].Issues) > 0 {
+		step.AddSubStep(fmt.Sprintf("Security: %d issues", len(result.Categories[validate.CategorySecurity].Issues)), progress.StatusWarning)
+	} else {
+		step.AddSubStep("Security: No issues", progress.StatusSuccess)
+	}
+	if len(result.Categories[validate.CategoryDeprecation].Issues) > 0 {
+		step.AddSubStep(fmt.Sprintf("Deprecation: %d issues", len(result.Categories[validate.CategoryDeprecation].Issues)), progress.StatusWarning)
+	} else {
+		step.AddSubStep("Deprecation: No deprecated APIs", progress.StatusSuccess)
+	}
+	if len(result.Categories[validate.CategoryKustomize].Issues) > 0 {
+		step.AddSubStep(fmt.Sprintf("Kustomize: %d issues", len(result.Categories[validate.CategoryKustomize].Issues)), progress.StatusWarning)
+	} else {
+		step.AddSubStep("Kustomize: All builds pass", progress.StatusSuccess)
+	}
+
+	prog.ShowSubSteps(step)
+
+	if v.ShouldFail(result) {
+		prog.FailStep(valSection, step, fmt.Errorf("%d critical/high issues found", result.Failed))
+		return fmt.Errorf("validation failed with %d issues at severity %s or higher", result.Failed, validateFailOn)
+	}
+
+	prog.SuccessStep(valSection, step)
 	return nil
 }

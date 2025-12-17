@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{.Name}}-multi-cluster
+  namespace: {{.ArgoCDNamespace}}
+spec:
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+{{- range .Environments}}
+                - env: {{.Name}}
+                  namespace: {{.Namespace}}
+{{- end}}
+          - clusters:
+              selector:
+                matchLabels:
+                  env: '{{`{{env}}`}}'
+  template:
+    metadata:
+      name: '{{`{{name}}`}}-{{.Name}}-{{`{{env}}`}}'
+    spec:
+      project: {{.Project}}
+      source:
+        repoURL: {{.RepoURL}}
+        targetRevision: {{.Branch}}
+        path: {{.Path}}/overlays/{{`{{env}}`}}
+      destination:
+        server: '{{`{{server}}`}}'
+        namespace: '{{`{{namespace}}`}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+

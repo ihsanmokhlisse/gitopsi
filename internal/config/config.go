@@ -2,18 +2,19 @@ package config
 
 // Config represents the complete gitopsi configuration.
 type Config struct {
-	Project      Project         `yaml:"project"`
-	Output       Output          `yaml:"output"`
-	Git          GitConfig       `yaml:"git"`
-	Cluster      ClusterConfig   `yaml:"cluster"`
-	Bootstrap    BootstrapConfig `yaml:"bootstrap"`
-	Platform     string          `yaml:"platform"`
-	Scope        string          `yaml:"scope"`
-	GitOpsTool   string          `yaml:"gitops_tool"`
-	Environments []Environment   `yaml:"environments"`
-	Infra        Infrastructure  `yaml:"infrastructure"`
-	Apps         []Application   `yaml:"applications"`
-	Docs         Documentation   `yaml:"docs"`
+	Project      Project             `yaml:"project"`
+	Output       Output              `yaml:"output"`
+	Git          GitConfig           `yaml:"git"`
+	Cluster      ClusterConfig       `yaml:"cluster"`
+	Bootstrap    BootstrapConfig     `yaml:"bootstrap"`
+	Platform     string              `yaml:"platform"`
+	Scope        string              `yaml:"scope"`
+	GitOpsTool   string              `yaml:"gitops_tool"`
+	Topology     EnvironmentTopology `yaml:"topology,omitempty"`
+	Environments []Environment       `yaml:"environments"`
+	Infra        Infrastructure      `yaml:"infrastructure"`
+	Apps         []Application       `yaml:"applications"`
+	Docs         Documentation       `yaml:"docs"`
 }
 
 type Project struct {
@@ -118,9 +119,27 @@ type BootstrapKustomizeConfig struct {
 }
 
 type Environment struct {
-	Name    string `yaml:"name"`
-	Cluster string `yaml:"cluster"`
+	Name      string               `yaml:"name"`
+	Cluster   string               `yaml:"cluster,omitempty"`
+	Namespace string               `yaml:"namespace,omitempty"`
+	Clusters  []EnvironmentCluster `yaml:"clusters,omitempty"`
 }
+
+type EnvironmentCluster struct {
+	Name      string `yaml:"name"`
+	URL       string `yaml:"url"`
+	Namespace string `yaml:"namespace,omitempty"`
+	Region    string `yaml:"region,omitempty"`
+	Primary   bool   `yaml:"primary,omitempty"`
+}
+
+type EnvironmentTopology string
+
+const (
+	TopologyNamespaceBased EnvironmentTopology = "namespace-based"
+	TopologyClusterPerEnv  EnvironmentTopology = "cluster-per-env"
+	TopologyMultiCluster   EnvironmentTopology = "multi-cluster"
+)
 
 type Infrastructure struct {
 	Namespaces      bool `yaml:"namespaces"`
@@ -147,6 +166,7 @@ func NewDefaultConfig() *Config {
 		Platform:   "kubernetes",
 		Scope:      "both",
 		GitOpsTool: "argocd",
+		Topology:   TopologyNamespaceBased,
 		Output: Output{
 			Type:   "local",
 			Branch: "main",
@@ -192,4 +212,37 @@ func NewDefaultConfig() *Config {
 			Onboarding:   true,
 		},
 	}
+}
+
+func (t EnvironmentTopology) IsValid() bool {
+	switch t {
+	case TopologyNamespaceBased, TopologyClusterPerEnv, TopologyMultiCluster, "":
+		return true
+	}
+	return false
+}
+
+func (c *Config) GetEnvironmentNamespace(envName string) string {
+	for _, env := range c.Environments {
+		if env.Name == envName {
+			if env.Namespace != "" {
+				return env.Namespace
+			}
+			return c.Project.Name + "-" + env.Name
+		}
+	}
+	return c.Project.Name + "-" + envName
+}
+
+func (c *Config) GetEnvironmentClusters(envName string) []EnvironmentCluster {
+	for _, env := range c.Environments {
+		if env.Name == envName {
+			return env.Clusters
+		}
+	}
+	return nil
+}
+
+func (c *Config) IsMultiCluster() bool {
+	return c.Topology == TopologyClusterPerEnv || c.Topology == TopologyMultiCluster
 }

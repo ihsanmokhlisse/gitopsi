@@ -275,6 +275,94 @@ func TestGenerateArgoCD(t *testing.T) {
 	if !strings.Contains(string(projectContent), "kind: AppProject") {
 		t.Error("Project file missing 'kind: AppProject'")
 	}
+
+	if !strings.Contains(string(projectContent), "namespace: argocd") {
+		t.Error("Project file should use 'namespace: argocd' for kubernetes platform")
+	}
+}
+
+func TestGenerateArgoCDOpenShiftNamespace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "test-openshift"},
+		Platform:   "openshift",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev", Cluster: "https://api.ocp.local:6443"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	projectContent, err := os.ReadFile(filepath.Join(tmpDir, "test-openshift/argocd/projects/infrastructure.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read project file: %v", err)
+	}
+
+	if !strings.Contains(string(projectContent), "namespace: openshift-gitops") {
+		t.Errorf("OpenShift platform should use 'namespace: openshift-gitops', got: %s", string(projectContent))
+	}
+
+	appContent, err := os.ReadFile(filepath.Join(tmpDir, "test-openshift/argocd/applicationsets/infra-dev.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read application file: %v", err)
+	}
+
+	if !strings.Contains(string(appContent), "namespace: openshift-gitops") {
+		t.Errorf("OpenShift applications should use 'namespace: openshift-gitops', got: %s", string(appContent))
+	}
+}
+
+func TestGenerateArgoCDCustomNamespace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "test-custom-ns"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Bootstrap: config.BootstrapConfig{
+			Namespace: "custom-argocd-ns",
+		},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	projectContent, err := os.ReadFile(filepath.Join(tmpDir, "test-custom-ns/argocd/projects/infrastructure.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read project file: %v", err)
+	}
+
+	if !strings.Contains(string(projectContent), "namespace: custom-argocd-ns") {
+		t.Errorf("Custom namespace should be used, got: %s", string(projectContent))
+	}
 }
 
 func TestGenerateDocs(t *testing.T) {

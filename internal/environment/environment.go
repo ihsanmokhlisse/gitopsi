@@ -7,9 +7,9 @@ import (
 type Topology string
 
 const (
-	TopologyNamespaceBased   Topology = "namespace-based"
-	TopologyClusterPerEnv    Topology = "cluster-per-env"
-	TopologyMultiCluster     Topology = "multi-cluster"
+	TopologyNamespaceBased Topology = "namespace-based"
+	TopologyClusterPerEnv  Topology = "cluster-per-env"
+	TopologyMultiCluster   Topology = "multi-cluster"
 )
 
 func (t Topology) String() string {
@@ -228,4 +228,3 @@ func (c *Config) Summary() string {
 	}
 	return "Unknown topology"
 }
-

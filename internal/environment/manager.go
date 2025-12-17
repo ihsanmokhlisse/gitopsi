@@ -222,4 +222,3 @@ func (m *Manager) GetPromotionPath() []string {
 	}
 	return names
 }
-

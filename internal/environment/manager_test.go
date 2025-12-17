@@ -268,4 +268,3 @@ func TestManager_GetPromotionPath(t *testing.T) {
 	path := mgr.GetPromotionPath()
 	assert.Equal(t, []string{"dev", "staging", "prod"}, path)
 }
-

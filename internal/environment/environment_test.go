@@ -411,4 +411,3 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "dev", cfg.Environments[0].Name)
 	assert.Equal(t, "myproject-dev", cfg.Environments[0].Namespace)
 }
-

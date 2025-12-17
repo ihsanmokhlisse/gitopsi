@@ -13,17 +13,17 @@ import (
 )
 
 var (
-	envTopology     string
-	envNamespace    string
-	envClusterURL   string
-	envClusterName  string
-	envRegion       string
-	envPrimary      bool
-	envProjectPath  string
-	envFromEnv      string
-	envToEnv        string
-	envPromoteAll   bool
-	envPromoteApp   string
+	envTopology    string
+	envNamespace   string
+	envClusterURL  string
+	envClusterName string
+	envRegion      string
+	envPrimary     bool
+	envProjectPath string
+	envFromEnv     string
+	envToEnv       string
+	envPromoteAll  bool
+	envPromoteApp  string
 )
 
 var envCmd = &cobra.Command{
@@ -411,4 +411,3 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-

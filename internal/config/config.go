@@ -1,9 +1,12 @@
 package config
 
+// Config represents the complete gitopsi configuration.
 type Config struct {
 	Project      Project        `yaml:"project"`
 	Output       Output         `yaml:"output"`
 	Git          GitConfig      `yaml:"git"`
+	Cluster      ClusterConfig  `yaml:"cluster"`
+	Bootstrap    BootstrapConfig `yaml:"bootstrap"`
 	Platform     string         `yaml:"platform"`
 	Scope        string         `yaml:"scope"`
 	GitOpsTool   string         `yaml:"gitops_tool"`
@@ -25,10 +28,12 @@ type Output struct {
 }
 
 type GitConfig struct {
-	URL      string      `yaml:"url"`
-	Branch   string      `yaml:"branch"`
-	Provider GitProvider `yaml:"provider"`
-	Auth     GitAuth     `yaml:"auth"`
+	URL             string      `yaml:"url"`
+	Branch          string      `yaml:"branch"`
+	Provider        GitProvider `yaml:"provider"`
+	Auth            GitAuth     `yaml:"auth"`
+	PushOnInit      bool        `yaml:"push_on_init"`
+	CreateIfMissing bool        `yaml:"create_if_missing"`
 }
 
 type GitProvider struct {
@@ -41,6 +46,38 @@ type GitAuth struct {
 	Token    string `yaml:"token"`
 	SSHKey   string `yaml:"ssh_key"`
 	TokenEnv string `yaml:"token_env"`
+}
+
+// ClusterConfig holds target cluster configuration.
+type ClusterConfig struct {
+	URL        string      `yaml:"url"`
+	Name       string      `yaml:"name"`
+	Auth       ClusterAuth `yaml:"auth"`
+	Platform   string      `yaml:"platform"`   // kubernetes, openshift, aks, eks, gke
+	Kubeconfig string      `yaml:"kubeconfig"` // Path to kubeconfig file
+	Context    string      `yaml:"context"`    // Kubeconfig context to use
+}
+
+// ClusterAuth holds cluster authentication configuration.
+type ClusterAuth struct {
+	Method    string `yaml:"method"`    // kubeconfig, token, oidc, service-account
+	Token     string `yaml:"token"`     // Bearer token
+	TokenEnv  string `yaml:"token_env"` // Env var containing token
+	CACert    string `yaml:"ca_cert"`   // CA certificate path
+	SkipTLS   bool   `yaml:"skip_tls"`  // Skip TLS verification (not recommended)
+}
+
+// BootstrapConfig holds GitOps tool bootstrap configuration.
+type BootstrapConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	Tool            string `yaml:"tool"`              // argocd, flux
+	Mode            string `yaml:"mode"`              // helm, olm, manifest
+	Namespace       string `yaml:"namespace"`         // Namespace to install GitOps tool
+	Wait            bool   `yaml:"wait"`              // Wait for GitOps tool to be ready
+	Timeout         int    `yaml:"timeout"`           // Timeout in seconds
+	ConfigureRepo   bool   `yaml:"configure_repo"`    // Add repo to GitOps tool
+	CreateAppOfApps bool   `yaml:"create_app_of_apps"` // Create root application
+	SyncInitial     bool   `yaml:"sync_initial"`      // Trigger initial sync
 }
 
 type Environment struct {
@@ -78,10 +115,28 @@ func NewDefaultConfig() *Config {
 			Branch: "main",
 		},
 		Git: GitConfig{
-			Branch: "main",
+			Branch:     "main",
+			PushOnInit: false,
 			Auth: GitAuth{
 				Method: "ssh",
 			},
+		},
+		Cluster: ClusterConfig{
+			Platform: "kubernetes",
+			Auth: ClusterAuth{
+				Method: "kubeconfig",
+			},
+		},
+		Bootstrap: BootstrapConfig{
+			Enabled:         false,
+			Tool:            "argocd",
+			Mode:            "helm",
+			Namespace:       "argocd",
+			Wait:            true,
+			Timeout:         300,
+			ConfigureRepo:   true,
+			CreateAppOfApps: true,
+			SyncInitial:     true,
 		},
 		Environments: []Environment{
 			{Name: "dev"},

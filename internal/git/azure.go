@@ -409,6 +409,10 @@ func (a *AzureDevOpsProvider) getGitEnv() []string {
 	return env
 }
 
+func (a *AzureDevOpsProvider) GetInstance() string {
+	return "dev.azure.com"
+}
+
 func (a *AzureDevOpsProvider) GetToken() string {
 	return a.token
 }

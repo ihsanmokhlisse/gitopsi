@@ -65,11 +65,12 @@ type CloneOptions struct {
 }
 
 type PushOptions struct {
-	Path   string
-	Remote string
-	Branch string
-	Force  bool
-	Auth   *AuthOptions
+	Path        string
+	Remote      string
+	Branch      string
+	Force       bool
+	SetUpstream bool
+	Auth        *AuthOptions
 }
 
 type PullOptions struct {
@@ -113,6 +114,7 @@ const (
 
 type Provider interface {
 	Name() ProviderType
+	GetInstance() string
 	Capabilities() []Capability
 
 	Authenticate(ctx context.Context, opts AuthOptions) error

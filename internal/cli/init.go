@@ -291,13 +291,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Step 5: Bootstrap GitOps tool if requested
 	var bootstrapResult *bootstrap.Result
+	var bootstrapper *bootstrap.Bootstrapper
 	if shouldBootstrap(cfg) && clusterConn != nil {
 		bootstrapSection := prog.StartSection(fmt.Sprintf("%s Bootstrap", cfg.GitOpsTool))
 
-		installStep := prog.StartStep(bootstrapSection, fmt.Sprintf("Installing %s via %s...", cfg.GitOpsTool, cfg.Bootstrap.Mode))
-		bootstrapResult, err = bootstrapCluster(ctx, cfg, clusterConn)
+		detectStep := prog.StartStep(bootstrapSection, fmt.Sprintf("Detecting existing %s...", cfg.GitOpsTool))
+		bootstrapper = createBootstrapper(cfg, clusterConn, projectPath)
+		bootstrapResult, err = bootstrapper.BootstrapOrDetect(ctx)
 		if err != nil {
-			prog.FailStep(bootstrapSection, installStep, err)
+			prog.FailStep(bootstrapSection, detectStep, err)
 			prog.ShowError(err, []string{
 				"Check you have cluster-admin permissions",
 				"Ensure the namespace doesn't already exist with conflicting resources",
@@ -305,20 +307,68 @@ func runInit(cmd *cobra.Command, args []string) error {
 			})
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
-		prog.SuccessStep(bootstrapSection, installStep)
+		prog.SuccessStep(bootstrapSection, detectStep)
+
+		if bootstrapResult.ExistingInstall {
+			detectStep.AddSubStep("Existing installation detected", progress.StatusSuccess)
+			detectStep.AddSubStep(fmt.Sprintf("Namespace: %s", bootstrapResult.Namespace), progress.StatusSuccess)
+		} else {
+			detectStep.AddSubStep("CRDs installed", progress.StatusSuccess)
+			detectStep.AddSubStep("Namespace created", progress.StatusSuccess)
+			detectStep.AddSubStep("Components deployed", progress.StatusSuccess)
+			detectStep.AddSubStep("Pods ready", progress.StatusSuccess)
+		}
+		prog.ShowSubSteps(detectStep)
 
 		summary.GitOpsTool.URL = bootstrapResult.URL
 		summary.GitOpsTool.Username = bootstrapResult.Username
 		summary.GitOpsTool.PasswordSecret = "argocd-initial-admin-secret"
 		summary.GitOpsTool.Namespace = bootstrapResult.Namespace
 		summary.GitOpsTool.Status = "healthy"
+	}
 
-		if bootstrapResult.Ready {
-			installStep.AddSubStep("CRDs installed", progress.StatusSuccess)
-			installStep.AddSubStep("Namespace created", progress.StatusSuccess)
-			installStep.AddSubStep("Components deployed", progress.StatusSuccess)
-			installStep.AddSubStep("Pods ready", progress.StatusSuccess)
-			prog.ShowSubSteps(installStep)
+	// Step 6: Apply generated ArgoCD manifests
+	if shouldBootstrap(cfg) && clusterConn != nil && bootstrapper != nil {
+		applySection := prog.StartSection("Apply GitOps Configuration")
+
+		applyStep := prog.StartStep(applySection, "Applying generated ArgoCD manifests...")
+		appliedManifests, applyErr := bootstrapper.ApplyGeneratedManifests(ctx, projectPath)
+		if applyErr != nil {
+			prog.FailStep(applySection, applyStep, applyErr)
+			prog.ShowError(applyErr, []string{
+				"Check the generated manifests are valid",
+				"Ensure ArgoCD is running",
+				"Verify you have permissions to create ArgoCD resources",
+			})
+			return fmt.Errorf("failed to apply ArgoCD manifests: %w", applyErr)
+		}
+		prog.SuccessStep(applySection, applyStep)
+
+		for _, manifest := range appliedManifests {
+			applyStep.AddSubStep(fmt.Sprintf("Applied: %s", manifest), progress.StatusSuccess)
+		}
+		prog.ShowSubSteps(applyStep)
+
+		bootstrapResult.AppliedManifests = appliedManifests
+
+		if cfg.Bootstrap.Wait {
+			syncStep := prog.StartStep(applySection, "Waiting for applications to sync...")
+			appNames := []string{cfg.Project.Name + "-infrastructure", cfg.Project.Name + "-apps"}
+			syncStatuses, syncErr := bootstrapper.WaitForAppSync(ctx, appNames)
+			if syncErr != nil {
+				prog.FailStep(applySection, syncStep, syncErr)
+			} else {
+				prog.SuccessStep(applySection, syncStep)
+				for _, status := range syncStatuses {
+					statusIcon := progress.StatusSuccess
+					if status.Status == "timeout" {
+						statusIcon = progress.StatusWarning
+					}
+					syncStep.AddSubStep(fmt.Sprintf("%s: %s (%s)", status.Name, status.SyncStatus, status.Health), statusIcon)
+				}
+				prog.ShowSubSteps(syncStep)
+			}
+			bootstrapResult.SyncedApps = syncStatuses
 		}
 	}
 
@@ -459,24 +509,27 @@ func authenticateCluster(ctx context.Context, cfg *config.Config) (*cluster.Clus
 	return c, nil
 }
 
-func bootstrapCluster(ctx context.Context, cfg *config.Config, c *cluster.Cluster) (*bootstrap.Result, error) {
+func createBootstrapper(cfg *config.Config, c *cluster.Cluster, projectPath string) *bootstrap.Bootstrapper {
 	opts := &bootstrap.Options{
-		Tool:            bootstrap.Tool(cfg.GitOpsTool),
-		Mode:            bootstrap.Mode(cfg.Bootstrap.Mode),
-		Namespace:       cfg.Bootstrap.Namespace,
-		Wait:            cfg.Bootstrap.Wait,
-		Timeout:         cfg.Bootstrap.Timeout,
-		ConfigureRepo:   cfg.Bootstrap.ConfigureRepo,
-		RepoURL:         cfg.Git.URL,
-		RepoBranch:      cfg.Git.Branch,
-		RepoPath:        cfg.GitOpsTool + "/applicationsets",
-		CreateAppOfApps: cfg.Bootstrap.CreateAppOfApps,
-		SyncInitial:     cfg.Bootstrap.SyncInitial,
-		ProjectName:     cfg.Project.Name,
+		Tool:                 bootstrap.Tool(cfg.GitOpsTool),
+		Mode:                 bootstrap.Mode(cfg.Bootstrap.Mode),
+		Namespace:            cfg.Bootstrap.Namespace,
+		Wait:                 cfg.Bootstrap.Wait,
+		Timeout:              cfg.Bootstrap.Timeout,
+		ConfigureRepo:        cfg.Bootstrap.ConfigureRepo,
+		RepoURL:              cfg.Git.URL,
+		RepoBranch:           cfg.Git.Branch,
+		RepoPath:             cfg.GitOpsTool + "/applicationsets",
+		CreateAppOfApps:      cfg.Bootstrap.CreateAppOfApps,
+		SyncInitial:          cfg.Bootstrap.SyncInitial,
+		ProjectName:          cfg.Project.Name,
+		GeneratedPath:        projectPath,
+		ApplyGeneratedConfig: true,
+		WaitForSync:          cfg.Bootstrap.Wait,
+		SyncTimeout:          cfg.Bootstrap.Timeout,
 	}
 
-	b := bootstrap.New(c, opts)
-	return b.Bootstrap(ctx)
+	return bootstrap.New(c, opts)
 }
 
 func runGitCommand(ctx context.Context, dir string, args ...string) error {

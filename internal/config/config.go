@@ -188,7 +188,7 @@ func NewDefaultConfig() *Config {
 			Enabled:         false,
 			Tool:            "argocd",
 			Mode:            "helm",
-			Namespace:       "argocd",
+			Namespace:       "", // Empty to allow platform-based detection (openshift-gitops vs argocd)
 			Wait:            true,
 			Timeout:         300,
 			ConfigureRepo:   true,

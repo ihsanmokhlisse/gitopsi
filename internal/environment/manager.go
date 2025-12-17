@@ -73,11 +73,7 @@ func (m *Manager) CreateEnvironment(name string, opts CreateEnvOptions) error {
 	env := &Environment{
 		Name:      name,
 		Namespace: opts.Namespace,
-		Clusters:  []ClusterInfo{},
-	}
-
-	for _, c := range opts.Clusters {
-		env.Clusters = append(env.Clusters, c)
+		Clusters:  append([]ClusterInfo{}, opts.Clusters...),
 	}
 
 	if err := m.config.AddEnvironment(env); err != nil {
@@ -201,16 +197,20 @@ func (m *Manager) Promote(opts PromotionOptions) (*PromotionResult, error) {
 
 	if opts.DryRun {
 		result.Message = fmt.Sprintf("Would promote %s from %s to %s", opts.Application, opts.FromEnv, opts.ToEnv)
-		result.Changes = append(result.Changes, fmt.Sprintf("Copy overlay from %s to %s", opts.FromEnv, opts.ToEnv))
-		result.Changes = append(result.Changes, "Update image tags")
-		result.Changes = append(result.Changes, "Update configuration values")
+		result.Changes = append(result.Changes,
+			fmt.Sprintf("Copy overlay from %s to %s", opts.FromEnv, opts.ToEnv),
+			"Update image tags",
+			"Update configuration values",
+		)
 		return result, nil
 	}
 
 	result.Message = fmt.Sprintf("Promoted %s from %s to %s", opts.Application, opts.FromEnv, opts.ToEnv)
-	result.Changes = append(result.Changes, fmt.Sprintf("Copied overlay from %s to %s", opts.FromEnv, opts.ToEnv))
-	result.Changes = append(result.Changes, "Updated image tags")
-	result.Changes = append(result.Changes, "Updated configuration values")
+	result.Changes = append(result.Changes,
+		fmt.Sprintf("Copied overlay from %s to %s", opts.FromEnv, opts.ToEnv),
+		"Updated image tags",
+		"Updated configuration values",
+	)
 
 	return result, nil
 }

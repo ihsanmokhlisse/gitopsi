@@ -23,7 +23,6 @@ var (
 	envFromEnv     string
 	envToEnv       string
 	envPromoteAll  bool
-	envPromoteApp  string
 )
 
 var envCmd = &cobra.Command{

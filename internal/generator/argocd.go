@@ -82,6 +82,9 @@ func (g *Generator) generateArgoCDProjects(argoCDNamespace string) error {
 func (g *Generator) generateSingleClusterArgoCD(argoCDNamespace string) error {
 	repoURL := g.Config.Output.URL
 	if repoURL == "" {
+		repoURL = g.Config.Git.URL
+	}
+	if repoURL == "" {
 		repoURL = "https://github.com/org/" + g.Config.Project.Name + ".git"
 	}
 
@@ -136,6 +139,9 @@ func (g *Generator) generateSingleClusterArgoCD(argoCDNamespace string) error {
 
 func (g *Generator) generateMultiClusterArgoCD(argoCDNamespace string) error {
 	repoURL := g.Config.Output.URL
+	if repoURL == "" {
+		repoURL = g.Config.Git.URL
+	}
 	if repoURL == "" {
 		repoURL = "https://github.com/org/" + g.Config.Project.Name + ".git"
 	}

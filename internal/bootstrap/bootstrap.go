@@ -78,6 +78,12 @@ type Options struct {
 	SyncInitial     bool
 	ProjectName     string
 
+	// Generated manifest paths for auto-apply
+	GeneratedPath        string
+	ApplyGeneratedConfig bool
+	WaitForSync          bool
+	SyncTimeout          int
+
 	// Mode-specific configurations
 	Helm      *HelmConfig      `yaml:"helm,omitempty"`
 	OLM       *OLMConfig       `yaml:"olm,omitempty"`
@@ -87,13 +93,25 @@ type Options struct {
 
 // Result holds the bootstrap result.
 type Result struct {
-	Tool      Tool
-	URL       string
-	Username  string
-	Password  string
-	Namespace string
-	Ready     bool
-	Message   string
+	Tool             Tool
+	URL              string
+	Username         string
+	Password         string
+	Namespace        string
+	Ready            bool
+	Message          string
+	ExistingInstall  bool
+	AppliedManifests []string
+	SyncedApps       []SyncStatus
+}
+
+// SyncStatus represents the sync status of an application.
+type SyncStatus struct {
+	Name       string
+	Status     string
+	Health     string
+	SyncStatus string
+	Message    string
 }
 
 // Bootstrapper handles GitOps tool installation.
@@ -181,6 +199,187 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*Result, error) {
 
 	result.Message = fmt.Sprintf("%s installed successfully in namespace %s", b.options.Tool, b.options.Namespace)
 	return result, nil
+}
+
+// DetectExistingArgoCD checks if ArgoCD is already installed and returns detection result.
+func (b *Bootstrapper) DetectExistingArgoCD(ctx context.Context) (*ArgoCDDetectionResult, error) {
+	timeout := time.Duration(b.options.Timeout) * time.Second
+	detector := NewDetector(b.cluster.Name, timeout)
+	return detector.DetectArgoCD(ctx)
+}
+
+// BootstrapOrDetect either bootstraps ArgoCD or detects existing installation.
+func (b *Bootstrapper) BootstrapOrDetect(ctx context.Context) (*Result, error) {
+	result := &Result{
+		Tool:      b.options.Tool,
+		Namespace: b.options.Namespace,
+	}
+
+	if b.options.Tool == ToolArgoCD {
+		detection, err := b.DetectExistingArgoCD(ctx)
+		if err == nil && detection.Installed && detection.Running {
+			result.ExistingInstall = true
+			result.Ready = true
+			result.Namespace = detection.Namespace
+			result.URL = detection.URL
+			result.Username = "admin"
+			result.Message = fmt.Sprintf("Existing %s ArgoCD detected in namespace %s", detection.Type, detection.Namespace)
+			return result, nil
+		}
+	}
+
+	return b.Bootstrap(ctx)
+}
+
+// ApplyGeneratedManifests applies the generated ArgoCD manifests from the output directory.
+func (b *Bootstrapper) ApplyGeneratedManifests(ctx context.Context, projectPath string) ([]string, error) {
+	if b.options.Tool != ToolArgoCD {
+		return nil, nil
+	}
+
+	var appliedManifests []string
+	argoCDPath := fmt.Sprintf("%s/argocd", projectPath)
+
+	if _, err := os.Stat(argoCDPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("argocd directory not found at %s", argoCDPath)
+	}
+
+	projectsPath := fmt.Sprintf("%s/projects", argoCDPath)
+	if _, err := os.Stat(projectsPath); err == nil {
+		files, err := os.ReadDir(projectsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read projects directory: %w", err)
+		}
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
+				continue
+			}
+			filePath := fmt.Sprintf("%s/%s", projectsPath, file.Name())
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name(), err)
+			}
+			if err := b.cluster.Apply(ctx, string(content)); err != nil {
+				return nil, fmt.Errorf("failed to apply %s: %w", file.Name(), err)
+			}
+			appliedManifests = append(appliedManifests, file.Name())
+		}
+	}
+
+	applicationsPath := fmt.Sprintf("%s/applications", argoCDPath)
+	if _, err := os.Stat(applicationsPath); err == nil {
+		files, err := os.ReadDir(applicationsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read applications directory: %w", err)
+		}
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
+				continue
+			}
+			filePath := fmt.Sprintf("%s/%s", applicationsPath, file.Name())
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name(), err)
+			}
+			if err := b.cluster.Apply(ctx, string(content)); err != nil {
+				return nil, fmt.Errorf("failed to apply %s: %w", file.Name(), err)
+			}
+			appliedManifests = append(appliedManifests, file.Name())
+		}
+	}
+
+	appsetsPath := fmt.Sprintf("%s/applicationsets", argoCDPath)
+	if _, err := os.Stat(appsetsPath); err == nil {
+		files, err := os.ReadDir(appsetsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read applicationsets directory: %w", err)
+		}
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
+				continue
+			}
+			filePath := fmt.Sprintf("%s/%s", appsetsPath, file.Name())
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name(), err)
+			}
+			if err := b.cluster.Apply(ctx, string(content)); err != nil {
+				return nil, fmt.Errorf("failed to apply %s: %w", file.Name(), err)
+			}
+			appliedManifests = append(appliedManifests, file.Name())
+		}
+	}
+
+	return appliedManifests, nil
+}
+
+// WaitForAppSync waits for ArgoCD applications to sync.
+func (b *Bootstrapper) WaitForAppSync(ctx context.Context, appNames []string) ([]SyncStatus, error) {
+	if b.options.Tool != ToolArgoCD {
+		return nil, nil
+	}
+
+	timeout := b.options.SyncTimeout
+	if timeout == 0 {
+		timeout = 300
+	}
+
+	syncStatuses := make([]SyncStatus, 0, len(appNames))
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+
+	for _, appName := range appNames {
+		status := SyncStatus{Name: appName}
+		for time.Now().Before(deadline) {
+			cmd := exec.CommandContext(ctx, "kubectl", "get", "application", appName,
+				"-n", b.options.Namespace, "-o", "jsonpath={.status.sync.status},{.status.health.status}")
+			output, err := cmd.Output()
+			if err != nil {
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			parts := strings.Split(string(output), ",")
+			if len(parts) >= 2 {
+				status.SyncStatus = parts[0]
+				status.Health = parts[1]
+				if parts[0] == "Synced" && (parts[1] == "Healthy" || parts[1] == "Progressing") {
+					status.Status = "ready"
+					break
+				}
+			}
+			time.Sleep(5 * time.Second)
+		}
+		if status.Status == "" {
+			status.Status = "timeout"
+			status.Message = "Sync did not complete within timeout"
+		}
+		syncStatuses = append(syncStatuses, status)
+	}
+
+	return syncStatuses, nil
+}
+
+// GetApplicationStatus returns the status of an ArgoCD application.
+func (b *Bootstrapper) GetApplicationStatus(ctx context.Context, appName string) (*SyncStatus, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "application", appName,
+		"-n", b.options.Namespace, "-o", "jsonpath={.status.sync.status},{.status.health.status},{.status.operationState.message}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get application status: %w", err)
+	}
+
+	parts := strings.Split(string(output), ",")
+	status := &SyncStatus{Name: appName}
+	if len(parts) >= 1 {
+		status.SyncStatus = parts[0]
+	}
+	if len(parts) >= 2 {
+		status.Health = parts[1]
+	}
+	if len(parts) >= 3 {
+		status.Message = parts[2]
+	}
+	status.Status = "active"
+	return status, nil
 }
 
 // installArgoCD installs ArgoCD using the specified mode.

@@ -16,13 +16,26 @@ func (g *Generator) generateGitOps() error {
 	return nil
 }
 
+func (g *Generator) getArgoCDNamespace() string {
+	if g.Config.Bootstrap.Namespace != "" {
+		return g.Config.Bootstrap.Namespace
+	}
+	if g.Config.Platform == "openshift" {
+		return "openshift-gitops"
+	}
+	return "argocd"
+}
+
 func (g *Generator) generateArgoCD() error {
 	fmt.Println("🔄 Generating ArgoCD configuration...")
 
+	argoCDNamespace := g.getArgoCDNamespace()
+
 	if g.Config.Scope == "infrastructure" || g.Config.Scope == "both" {
 		projectData := map[string]string{
-			"Name":        "infrastructure",
-			"Description": "Infrastructure resources",
+			"Name":            "infrastructure",
+			"Description":     "Infrastructure resources",
+			"ArgoCDNamespace": argoCDNamespace,
 		}
 		content, err := templates.Render("argocd/project.yaml.tmpl", projectData)
 		if err != nil {
@@ -36,8 +49,9 @@ func (g *Generator) generateArgoCD() error {
 
 	if g.Config.Scope == "application" || g.Config.Scope == "both" {
 		projectData := map[string]string{
-			"Name":        "applications",
-			"Description": "Application deployments",
+			"Name":            "applications",
+			"Description":     "Application deployments",
+			"ArgoCDNamespace": argoCDNamespace,
 		}
 		content, err := templates.Render("argocd/project.yaml.tmpl", projectData)
 		if err != nil {
@@ -57,13 +71,14 @@ func (g *Generator) generateArgoCD() error {
 	for _, env := range g.Config.Environments {
 		if g.Config.Scope == "infrastructure" || g.Config.Scope == "both" {
 			appData := map[string]string{
-				"Name":           fmt.Sprintf("%s-infra-%s", g.Config.Project.Name, env.Name),
-				"Project":        "infrastructure",
-				"RepoURL":        repoURL,
-				"Path":           fmt.Sprintf("infrastructure/overlays/%s", env.Name),
-				"Server":         env.Cluster,
-				"Namespace":      g.Config.Project.Name + "-" + env.Name,
-				"TargetRevision": "HEAD",
+				"Name":            fmt.Sprintf("%s-infra-%s", g.Config.Project.Name, env.Name),
+				"Project":         "infrastructure",
+				"RepoURL":         repoURL,
+				"Path":            fmt.Sprintf("infrastructure/overlays/%s", env.Name),
+				"Server":          env.Cluster,
+				"Namespace":       g.Config.Project.Name + "-" + env.Name,
+				"TargetRevision":  "HEAD",
+				"ArgoCDNamespace": argoCDNamespace,
 			}
 			content, err := templates.Render("argocd/application.yaml.tmpl", appData)
 			if err != nil {
@@ -78,13 +93,14 @@ func (g *Generator) generateArgoCD() error {
 
 		if g.Config.Scope == "application" || g.Config.Scope == "both" {
 			appData := map[string]string{
-				"Name":           fmt.Sprintf("%s-apps-%s", g.Config.Project.Name, env.Name),
-				"Project":        "applications",
-				"RepoURL":        repoURL,
-				"Path":           fmt.Sprintf("applications/overlays/%s", env.Name),
-				"Server":         env.Cluster,
-				"Namespace":      g.Config.Project.Name + "-" + env.Name,
-				"TargetRevision": "HEAD",
+				"Name":            fmt.Sprintf("%s-apps-%s", g.Config.Project.Name, env.Name),
+				"Project":         "applications",
+				"RepoURL":         repoURL,
+				"Path":            fmt.Sprintf("applications/overlays/%s", env.Name),
+				"Server":          env.Cluster,
+				"Namespace":       g.Config.Project.Name + "-" + env.Name,
+				"TargetRevision":  "HEAD",
+				"ArgoCDNamespace": argoCDNamespace,
 			}
 			content, err := templates.Render("argocd/application.yaml.tmpl", appData)
 			if err != nil {

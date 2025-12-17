@@ -90,4 +90,3 @@ func getArgoCDPassword(ctx context.Context, namespace string) (string, error) {
 
 	return strings.TrimSpace(string(decoded)), nil
 }
-

@@ -167,7 +167,7 @@ func (v *Validator) ValidateArgoCD(ctx context.Context, namespace string) []Vali
 
 	// Check server accessible
 	cmd = exec.CommandContext(ctx, "kubectl", "get", "svc", "argocd-server", "-n", namespace, "-o", "jsonpath={.spec.type}")
-	output, err = cmd.CombinedOutput()
+	_, err = cmd.CombinedOutput()
 	if err != nil {
 		checks[1].Status = "warning"
 		checks[1].Message = "Could not verify ArgoCD service"
@@ -177,8 +177,8 @@ func (v *Validator) ValidateArgoCD(ctx context.Context, namespace string) []Vali
 
 	// Check repository connected - try to list repos
 	cmd = exec.CommandContext(ctx, "kubectl", "get", "secret", "-n", namespace, "-l", "argocd.argoproj.io/secret-type=repository", "-o", "name")
-	output, err = cmd.CombinedOutput()
-	if err != nil || len(strings.TrimSpace(string(output))) == 0 {
+	repoOutput, repoErr := cmd.CombinedOutput()
+	if repoErr != nil || strings.TrimSpace(string(repoOutput)) == "" {
 		checks[2].Status = "warning"
 		checks[2].Message = "No repository secrets found"
 	} else {
@@ -222,12 +222,13 @@ func (v *Validator) ValidateSync(ctx context.Context, namespace string) []Valida
 				break
 			}
 		}
-		if allSynced && len(statuses) > 0 {
+		switch {
+		case allSynced && len(statuses) > 0:
 			checks[0].Status = "passed"
-		} else if len(statuses) == 0 {
+		case len(statuses) == 0:
 			checks[0].Status = "warning"
 			checks[0].Message = "No applications found"
-		} else {
+		default:
 			checks[0].Status = "warning"
 			checks[0].Message = "Some applications are not synced"
 		}
@@ -248,12 +249,13 @@ func (v *Validator) ValidateSync(ctx context.Context, namespace string) []Valida
 				break
 			}
 		}
-		if allHealthy && len(statuses) > 0 {
+		switch {
+		case allHealthy && len(statuses) > 0:
 			checks[1].Status = "passed"
-		} else if len(statuses) == 0 {
+		case len(statuses) == 0:
 			checks[1].Status = "passed"
 			checks[1].Message = "No applications to check"
-		} else {
+		default:
 			checks[1].Status = "warning"
 			checks[1].Message = "Some resources are degraded"
 		}
@@ -287,4 +289,3 @@ func (v *Validator) HasWarnings() bool {
 	}
 	return false
 }
-

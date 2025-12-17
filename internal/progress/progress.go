@@ -12,12 +12,12 @@ import (
 type StepStatus string
 
 const (
-	StatusPending  StepStatus = "pending"
-	StatusRunning  StepStatus = "running"
-	StatusSuccess  StepStatus = "success"
-	StatusFailed   StepStatus = "failed"
-	StatusSkipped  StepStatus = "skipped"
-	StatusWarning  StepStatus = "warning"
+	StatusPending StepStatus = "pending"
+	StatusRunning StepStatus = "running"
+	StatusSuccess StepStatus = "success"
+	StatusFailed  StepStatus = "failed"
+	StatusSkipped StepStatus = "skipped"
+	StatusWarning StepStatus = "warning"
 )
 
 // Step represents a single step in the progress.
@@ -111,8 +111,10 @@ func (p *Progress) StartStep(section *Section, name string) *Step {
 	p.currentStep = step
 
 	if !p.quiet && !p.jsonOutput {
-		spinner, _ := pterm.DefaultSpinner.Start(name)
-		section.spinner = spinner
+		spinner, err := pterm.DefaultSpinner.Start(name)
+		if err == nil {
+			section.spinner = spinner
+		}
 	}
 
 	return step
@@ -197,11 +199,12 @@ func (p *Progress) ShowValidation(checks []ValidationCheck) {
 
 	for _, check := range checks {
 		icon := getStatusIcon(StepStatus(check.Status))
-		if check.Status == "passed" {
+		switch check.Status {
+		case "passed":
 			pterm.Success.Printf("%s %s\n", icon, check.Name)
-		} else if check.Status == "warning" {
+		case "warning":
 			pterm.Warning.Printf("%s %s - %s\n", icon, check.Name, check.Message)
-		} else {
+		default:
 			pterm.Error.Printf("%s %s - %s\n", icon, check.Name, check.Message)
 		}
 	}
@@ -259,4 +262,3 @@ type ValidationCheck struct {
 	Status  string
 	Message string
 }
-

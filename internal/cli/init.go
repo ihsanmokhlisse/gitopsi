@@ -423,39 +423,6 @@ func authenticateGit(ctx context.Context, cfg *config.Config) (git.Provider, err
 	return provider, nil
 }
 
-func pushToGit(ctx context.Context, cfg *config.Config, provider git.Provider, projectPath string) error {
-	if err := runGitCommand(ctx, projectPath, "init"); err != nil {
-		return fmt.Errorf("failed to init git repo: %w", err)
-	}
-
-	if err := runGitCommand(ctx, projectPath, "remote", "add", "origin", cfg.Git.URL); err != nil {
-		return fmt.Errorf("failed to add remote: %w", err)
-	}
-
-	if err := runGitCommand(ctx, projectPath, "add", "."); err != nil {
-		return fmt.Errorf("failed to stage files: %w", err)
-	}
-
-	if err := runGitCommand(ctx, projectPath, "commit", "-m", "feat: Initial GitOps repository structure"); err != nil {
-		return fmt.Errorf("failed to commit: %w", err)
-	}
-
-	branch := cfg.Git.Branch
-	if branch == "" {
-		branch = "main"
-	}
-
-	if err := provider.Push(ctx, git.PushOptions{
-		Remote:      "origin",
-		Branch:      branch,
-		SetUpstream: true,
-	}); err != nil {
-		return fmt.Errorf("failed to push: %w", err)
-	}
-
-	return nil
-}
-
 func authenticateCluster(ctx context.Context, cfg *config.Config) (*cluster.Cluster, error) {
 	c := cluster.New(cfg.Cluster.URL, cfg.Cluster.Name, cluster.Platform(cfg.Cluster.Platform))
 

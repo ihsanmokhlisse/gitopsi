@@ -162,4 +162,3 @@ func showAppsInfo(summary *progress.SetupSummary) {
 		}
 	}
 }
-

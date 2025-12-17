@@ -12,10 +12,10 @@ import (
 
 // SetupSummary contains all setup information.
 type SetupSummary struct {
-	Setup        SetupInfo        `yaml:"setup"`
-	Git          GitInfo          `yaml:"git"`
-	Cluster      ClusterInfo      `yaml:"cluster"`
-	GitOpsTool   GitOpsToolInfo   `yaml:"gitops_tool"`
+	Setup        SetupInfo         `yaml:"setup"`
+	Git          GitInfo           `yaml:"git"`
+	Cluster      ClusterInfo       `yaml:"cluster"`
+	GitOpsTool   GitOpsToolInfo    `yaml:"gitops_tool"`
 	Environments []EnvironmentInfo `yaml:"environments"`
 	Applications []ApplicationInfo `yaml:"applications"`
 }
@@ -38,11 +38,11 @@ type GitInfo struct {
 
 // ClusterInfo contains cluster information.
 type ClusterInfo struct {
-	Name       string `yaml:"name"`
-	URL        string `yaml:"url"`
-	Platform   string `yaml:"platform"`
-	Version    string `yaml:"version"`
-	Status     string `yaml:"status"`
+	Name       string   `yaml:"name"`
+	URL        string   `yaml:"url"`
+	Platform   string   `yaml:"platform"`
+	Version    string   `yaml:"version"`
+	Status     string   `yaml:"status"`
 	Namespaces []string `yaml:"namespaces"`
 }
 
@@ -76,8 +76,10 @@ type ApplicationInfo struct {
 // ShowSummary displays the complete setup summary.
 func (p *Progress) ShowSummary(summary *SetupSummary) {
 	if p.jsonOutput {
-		data, _ := yaml.Marshal(summary)
-		fmt.Println(string(data))
+		data, err := yaml.Marshal(summary)
+		if err == nil {
+			fmt.Println(string(data))
+		}
 		return
 	}
 
@@ -93,13 +95,13 @@ func (p *Progress) ShowSummary(summary *SetupSummary) {
 		Println(fmt.Sprintf("Duration: %s", formatDuration(summary.Setup.Duration)))
 
 	// Git Repository section
-	p.showGitSection(summary.Git)
+	p.showGitSection(&summary.Git)
 
 	// GitOps Tool section
-	p.showGitOpsSection(summary.GitOpsTool)
+	p.showGitOpsSection(&summary.GitOpsTool)
 
 	// Cluster section
-	p.showClusterSection(summary.Cluster)
+	p.showClusterSection(&summary.Cluster)
 
 	// Applications section
 	if len(summary.Applications) > 0 {
@@ -113,7 +115,7 @@ func (p *Progress) ShowSummary(summary *SetupSummary) {
 	p.showDocumentation(summary)
 }
 
-func (p *Progress) showGitSection(git GitInfo) {
+func (p *Progress) showGitSection(git *GitInfo) {
 	fmt.Println()
 	pterm.DefaultSection.WithLevel(2).Println("Git Repository")
 
@@ -130,9 +132,9 @@ func (p *Progress) showGitSection(git GitInfo) {
 	_ = pterm.DefaultTable.WithData(data).WithLeftAlignment().Render()
 }
 
-func (p *Progress) showGitOpsSection(tool GitOpsToolInfo) {
+func (p *Progress) showGitOpsSection(tool *GitOpsToolInfo) {
 	fmt.Println()
-	pterm.DefaultSection.WithLevel(2).Println(fmt.Sprintf("%s", tool.Name))
+	pterm.DefaultSection.WithLevel(2).Println(tool.Name)
 
 	data := pterm.TableData{
 		{"URL:", tool.URL},
@@ -151,7 +153,7 @@ func (p *Progress) showGitOpsSection(tool GitOpsToolInfo) {
 		tool.Name, tool.URL, tool.Username)
 }
 
-func (p *Progress) showClusterSection(cluster ClusterInfo) {
+func (p *Progress) showClusterSection(cluster *ClusterInfo) {
 	fmt.Println()
 	pterm.DefaultSection.WithLevel(2).Println("Cluster")
 
@@ -264,4 +266,3 @@ func LoadSummary(projectPath string) (*SetupSummary, error) {
 
 	return &summary, nil
 }
-

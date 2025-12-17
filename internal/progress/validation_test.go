@@ -8,7 +8,7 @@ func TestNewValidator(t *testing.T) {
 	v := NewValidator(true)
 
 	if v == nil {
-		t.Error("Expected non-nil validator")
+		t.Fatal("Expected non-nil validator")
 	}
 	if !v.verbose {
 		t.Error("Expected verbose to be true")
@@ -137,4 +137,3 @@ func TestValidationCheckStruct(t *testing.T) {
 		t.Errorf("Expected Message 'All good', got '%s'", check.Message)
 	}
 }
-

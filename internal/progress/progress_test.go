@@ -331,4 +331,3 @@ func TestShowSummaryQuiet(t *testing.T) {
 
 	p.ShowSummary(summary)
 }
-

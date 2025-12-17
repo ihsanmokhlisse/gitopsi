@@ -52,4 +52,3 @@ func init() {
 	statusCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON/YAML")
 	statusCmd.Flags().BoolVar(&quiet, "quiet", false, "Minimal output")
 }
-

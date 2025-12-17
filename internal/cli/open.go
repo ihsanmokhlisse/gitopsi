@@ -93,4 +93,3 @@ func openBrowser(url string) error {
 
 	return cmd.Start()
 }
-

@@ -13,30 +13,30 @@ import (
 type ArgoCDType string
 
 const (
-	ArgoCDTypeCommunity   ArgoCDType = "community"
-	ArgoCDTypeRedHat      ArgoCDType = "redhat"
-	ArgoCDTypeUnknown     ArgoCDType = "unknown"
+	ArgoCDTypeCommunity    ArgoCDType = "community"
+	ArgoCDTypeRedHat       ArgoCDType = "redhat"
+	ArgoCDTypeUnknown      ArgoCDType = "unknown"
 	ArgoCDTypeNotInstalled ArgoCDType = "not_installed"
 )
 
 type InstallMethod string
 
 const (
-	InstallMethodOperator  InstallMethod = "operator"
-	InstallMethodManifest  InstallMethod = "manifest"
-	InstallMethodHelm      InstallMethod = "helm"
-	InstallMethodOLM       InstallMethod = "olm"
-	InstallMethodUnknown   InstallMethod = "unknown"
+	InstallMethodOperator InstallMethod = "operator"
+	InstallMethodManifest InstallMethod = "manifest"
+	InstallMethodHelm     InstallMethod = "helm"
+	InstallMethodOLM      InstallMethod = "olm"
+	InstallMethodUnknown  InstallMethod = "unknown"
 )
 
 type OperatorSource string
 
 const (
-	OperatorSourceRedHat     OperatorSource = "redhat-operators"
-	OperatorSourceCommunity  OperatorSource = "community-operators"
-	OperatorSourceCertified  OperatorSource = "certified-operators"
+	OperatorSourceRedHat      OperatorSource = "redhat-operators"
+	OperatorSourceCommunity   OperatorSource = "community-operators"
+	OperatorSourceCertified   OperatorSource = "certified-operators"
 	OperatorSourceMarketplace OperatorSource = "redhat-marketplace"
-	OperatorSourceUnknown    OperatorSource = "unknown"
+	OperatorSourceUnknown     OperatorSource = "unknown"
 )
 
 type ComponentStatus string
@@ -58,21 +58,21 @@ type ArgoCDComponent struct {
 }
 
 type ArgoCDDetectionResult struct {
-	Installed        bool               `json:"installed"`
-	Type             ArgoCDType         `json:"type"`
-	InstallMethod    InstallMethod      `json:"install_method"`
-	OperatorSource   OperatorSource     `json:"operator_source,omitempty"`
-	Namespace        string             `json:"namespace"`
-	Version          string             `json:"version,omitempty"`
-	URL              string             `json:"url,omitempty"`
-	Running          bool               `json:"running"`
-	Components       []ArgoCDComponent  `json:"components"`
-	HealthStatus     string             `json:"health_status"`
-	SyncStatus       string             `json:"sync_status,omitempty"`
-	AppCount         int                `json:"app_count"`
-	DetectedAt       time.Time          `json:"detected_at"`
-	Issues           []string           `json:"issues,omitempty"`
-	Recommendations  []string           `json:"recommendations,omitempty"`
+	Installed       bool              `json:"installed"`
+	Type            ArgoCDType        `json:"type"`
+	InstallMethod   InstallMethod     `json:"install_method"`
+	OperatorSource  OperatorSource    `json:"operator_source,omitempty"`
+	Namespace       string            `json:"namespace"`
+	Version         string            `json:"version,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Running         bool              `json:"running"`
+	Components      []ArgoCDComponent `json:"components"`
+	HealthStatus    string            `json:"health_status"`
+	SyncStatus      string            `json:"sync_status,omitempty"`
+	AppCount        int               `json:"app_count"`
+	DetectedAt      time.Time         `json:"detected_at"`
+	Issues          []string          `json:"issues,omitempty"`
+	Recommendations []string          `json:"recommendations,omitempty"`
 }
 
 type Detector struct {
@@ -92,9 +92,9 @@ func NewDetector(kubeContext string, timeout time.Duration) *Detector {
 
 func (d *Detector) DetectArgoCD(ctx context.Context) (*ArgoCDDetectionResult, error) {
 	result := &ArgoCDDetectionResult{
-		DetectedAt: time.Now(),
-		Components: []ArgoCDComponent{},
-		Issues:     []string{},
+		DetectedAt:      time.Now(),
+		Components:      []ArgoCDComponent{},
+		Issues:          []string{},
 		Recommendations: []string{},
 	}
 
@@ -183,8 +183,8 @@ func (d *Detector) detectInstallMethod(ctx context.Context, namespace string) In
 	ctx1, cancel1 := context.WithTimeout(ctx, d.timeout)
 	defer cancel1()
 	cmd := exec.CommandContext(ctx1, "kubectl", args...)
-	output, _ := cmd.Output()
-	if strings.TrimSpace(string(output)) != "" {
+	output, err := cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
 		return InstallMethodOLM
 	}
 
@@ -195,8 +195,8 @@ func (d *Detector) detectInstallMethod(ctx context.Context, namespace string) In
 	ctx2, cancel2 := context.WithTimeout(ctx, d.timeout)
 	defer cancel2()
 	cmd = exec.CommandContext(ctx2, "kubectl", args...)
-	output, _ = cmd.Output()
-	if strings.Contains(string(output), "gitops") || strings.Contains(string(output), "argocd") {
+	output, err = cmd.Output()
+	if err == nil && (strings.Contains(string(output), "gitops") || strings.Contains(string(output), "argocd")) {
 		return InstallMethodOLM
 	}
 
@@ -207,8 +207,8 @@ func (d *Detector) detectInstallMethod(ctx context.Context, namespace string) In
 	ctx3, cancel3 := context.WithTimeout(ctx, d.timeout)
 	defer cancel3()
 	cmd = exec.CommandContext(ctx3, "kubectl", args...)
-	output, _ = cmd.Output()
-	if strings.TrimSpace(string(output)) != "" {
+	output, err = cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
 		return InstallMethodHelm
 	}
 
@@ -219,8 +219,8 @@ func (d *Detector) detectInstallMethod(ctx context.Context, namespace string) In
 	ctx4, cancel4 := context.WithTimeout(ctx, d.timeout)
 	defer cancel4()
 	cmd = exec.CommandContext(ctx4, "kubectl", args...)
-	output, _ = cmd.Output()
-	if strings.TrimSpace(string(output)) != "" {
+	output, err = cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
 		return InstallMethodOperator
 	}
 
@@ -286,9 +286,11 @@ func (d *Detector) detectURL(ctx context.Context, namespace string) string {
 	ctx1, cancel1 := context.WithTimeout(ctx, d.timeout)
 	defer cancel1()
 	cmd := exec.CommandContext(ctx1, "kubectl", args...)
-	output, _ := cmd.Output()
-	if host := strings.TrimSpace(string(output)); host != "" {
-		return "https://" + host
+	output, err := cmd.Output()
+	if err == nil {
+		if host := strings.TrimSpace(string(output)); host != "" {
+			return "https://" + host
+		}
 	}
 
 	args = []string{"get", "route", "-n", namespace, "-o", "jsonpath={.items[0].spec.host}"}
@@ -298,9 +300,11 @@ func (d *Detector) detectURL(ctx context.Context, namespace string) string {
 	ctx2, cancel2 := context.WithTimeout(ctx, d.timeout)
 	defer cancel2()
 	cmd = exec.CommandContext(ctx2, "kubectl", args...)
-	output, _ = cmd.Output()
-	if host := strings.TrimSpace(string(output)); host != "" {
-		return "https://" + host
+	output, err = cmd.Output()
+	if err == nil {
+		if host := strings.TrimSpace(string(output)); host != "" {
+			return "https://" + host
+		}
 	}
 
 	args = []string{"get", "ingress", "-n", namespace, "-o", "jsonpath={.items[0].spec.rules[0].host}"}
@@ -310,9 +314,11 @@ func (d *Detector) detectURL(ctx context.Context, namespace string) string {
 	ctx3, cancel3 := context.WithTimeout(ctx, d.timeout)
 	defer cancel3()
 	cmd = exec.CommandContext(ctx3, "kubectl", args...)
-	output, _ = cmd.Output()
-	if host := strings.TrimSpace(string(output)); host != "" {
-		return "https://" + host
+	output, err = cmd.Output()
+	if err == nil {
+		if host := strings.TrimSpace(string(output)); host != "" {
+			return "https://" + host
+		}
 	}
 
 	return ""
@@ -538,4 +544,3 @@ func (r *ArgoCDDetectionResult) Summary() string {
 
 	return sb.String()
 }
-

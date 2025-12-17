@@ -274,12 +274,12 @@ func TestAnalyzeAndRecommend(t *testing.T) {
 	d := NewDetector("", 30*time.Second)
 
 	tests := []struct {
-		name            string
-		result          *ArgoCDDetectionResult
-		wantIssues      int
-		wantRecs        int
-		containsIssue   string
-		containsRec     string
+		name          string
+		result        *ArgoCDDetectionResult
+		wantIssues    int
+		wantRecs      int
+		containsIssue string
+		containsRec   string
 	}{
 		{
 			name: "not running",
@@ -352,7 +352,7 @@ func TestAnalyzeAndRecommend(t *testing.T) {
 			if tt.containsIssue != "" {
 				found := false
 				for _, issue := range tt.result.Issues {
-					if assert.ObjectsAreEqual(issue, tt.containsIssue) || 
+					if assert.ObjectsAreEqual(issue, tt.containsIssue) ||
 						len(issue) > 0 && len(tt.containsIssue) > 0 {
 						if containsSubstring(issue, tt.containsIssue) {
 							found = true
@@ -378,11 +378,11 @@ func TestAnalyzeAndRecommend(t *testing.T) {
 }
 
 func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || 
-		len(s) > 0 && len(substr) > 0 && 
-		(s[:len(substr)] == substr || 
-		 s[len(s)-len(substr):] == substr ||
-		 findSubstring(s, substr)))
+	return len(s) >= len(substr) && (s == substr ||
+		len(s) > 0 && len(substr) > 0 &&
+			(s[:len(substr)] == substr ||
+				s[len(s)-len(substr):] == substr ||
+				findSubstring(s, substr)))
 }
 
 func findSubstring(s, substr string) bool {
@@ -393,4 +393,3 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
-

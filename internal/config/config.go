@@ -71,13 +71,50 @@ type ClusterAuth struct {
 type BootstrapConfig struct {
 	Enabled         bool   `yaml:"enabled"`
 	Tool            string `yaml:"tool"`               // argocd, flux
-	Mode            string `yaml:"mode"`               // helm, olm, manifest
+	Mode            string `yaml:"mode"`               // helm, olm, manifest, kustomize
 	Namespace       string `yaml:"namespace"`          // Namespace to install GitOps tool
 	Wait            bool   `yaml:"wait"`               // Wait for GitOps tool to be ready
 	Timeout         int    `yaml:"timeout"`            // Timeout in seconds
 	ConfigureRepo   bool   `yaml:"configure_repo"`     // Add repo to GitOps tool
 	CreateAppOfApps bool   `yaml:"create_app_of_apps"` // Create root application
 	SyncInitial     bool   `yaml:"sync_initial"`       // Trigger initial sync
+	Version         string `yaml:"version,omitempty"`  // Tool version
+
+	// Mode-specific configurations
+	Helm      *BootstrapHelmConfig      `yaml:"helm,omitempty"`
+	OLM       *BootstrapOLMConfig       `yaml:"olm,omitempty"`
+	Manifest  *BootstrapManifestConfig  `yaml:"manifest,omitempty"`
+	Kustomize *BootstrapKustomizeConfig `yaml:"kustomize,omitempty"`
+}
+
+// BootstrapHelmConfig holds Helm-specific bootstrap configuration.
+type BootstrapHelmConfig struct {
+	Repo      string            `yaml:"repo,omitempty"`
+	Chart     string            `yaml:"chart,omitempty"`
+	Version   string            `yaml:"version,omitempty"`
+	Values    map[string]any    `yaml:"values,omitempty"`
+	SetValues map[string]string `yaml:"set_values,omitempty"`
+}
+
+// BootstrapOLMConfig holds OLM-specific bootstrap configuration.
+type BootstrapOLMConfig struct {
+	Channel         string `yaml:"channel,omitempty"`
+	Source          string `yaml:"source,omitempty"`
+	SourceNamespace string `yaml:"source_namespace,omitempty"`
+	Approval        string `yaml:"approval,omitempty"` // Automatic, Manual
+}
+
+// BootstrapManifestConfig holds manifest-specific bootstrap configuration.
+type BootstrapManifestConfig struct {
+	URL   string   `yaml:"url,omitempty"`
+	Paths []string `yaml:"paths,omitempty"`
+}
+
+// BootstrapKustomizeConfig holds Kustomize-specific bootstrap configuration.
+type BootstrapKustomizeConfig struct {
+	URL     string   `yaml:"url,omitempty"`
+	Path    string   `yaml:"path,omitempty"`
+	Patches []string `yaml:"patches,omitempty"`
 }
 
 type Environment struct {

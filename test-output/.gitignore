@@ -1,0 +1,5 @@
+# Ignore all test output except this file
+*
+!.gitignore
+!README.md
+

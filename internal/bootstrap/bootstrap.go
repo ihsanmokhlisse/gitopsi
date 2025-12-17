@@ -24,10 +24,43 @@ const (
 type Mode string
 
 const (
-	ModeHelm     Mode = "helm"
-	ModeOLM      Mode = "olm"
-	ModeManifest Mode = "manifest"
+	ModeHelm      Mode = "helm"
+	ModeOLM       Mode = "olm"
+	ModeManifest  Mode = "manifest"
+	ModeKustomize Mode = "kustomize"
 )
+
+// HelmConfig holds Helm-specific configuration.
+type HelmConfig struct {
+	Repo      string            `yaml:"repo"`
+	Chart     string            `yaml:"chart"`
+	Version   string            `yaml:"version"`
+	Namespace string            `yaml:"namespace"`
+	Values    map[string]any    `yaml:"values"`
+	SetValues map[string]string `yaml:"set_values"`
+}
+
+// OLMConfig holds OLM-specific configuration.
+type OLMConfig struct {
+	Channel         string `yaml:"channel"`
+	Source          string `yaml:"source"`
+	SourceNamespace string `yaml:"source_namespace"`
+	Approval        string `yaml:"approval"`
+}
+
+// ManifestConfig holds manifest-specific configuration.
+type ManifestConfig struct {
+	URL       string   `yaml:"url"`
+	Paths     []string `yaml:"paths"`
+	Namespace string   `yaml:"namespace"`
+}
+
+// KustomizeConfig holds Kustomize-specific configuration.
+type KustomizeConfig struct {
+	URL     string   `yaml:"url"`
+	Path    string   `yaml:"path"`
+	Patches []string `yaml:"patches"`
+}
 
 // Options holds bootstrap configuration.
 type Options struct {
@@ -44,6 +77,12 @@ type Options struct {
 	CreateAppOfApps bool
 	SyncInitial     bool
 	ProjectName     string
+
+	// Mode-specific configurations
+	Helm      *HelmConfig      `yaml:"helm,omitempty"`
+	OLM       *OLMConfig       `yaml:"olm,omitempty"`
+	Manifest  *ManifestConfig  `yaml:"manifest,omitempty"`
+	Kustomize *KustomizeConfig `yaml:"kustomize,omitempty"`
 }
 
 // Result holds the bootstrap result.
@@ -153,6 +192,8 @@ func (b *Bootstrapper) installArgoCD(ctx context.Context) error {
 		return b.installArgoCDManifest(ctx)
 	case ModeOLM:
 		return b.installArgoCDOLM(ctx)
+	case ModeKustomize:
+		return b.installArgoCDKustomize(ctx)
 	default:
 		return fmt.Errorf("unsupported installation mode: %s", b.options.Mode)
 	}
@@ -160,10 +201,11 @@ func (b *Bootstrapper) installArgoCD(ctx context.Context) error {
 
 // installArgoCDHelm installs ArgoCD using Helm.
 func (b *Bootstrapper) installArgoCDHelm(ctx context.Context) error {
+	helmCfg := b.getArgoCDHelmConfig()
+
 	// Add ArgoCD Helm repo
-	cmd := exec.CommandContext(ctx, "helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm")
+	cmd := exec.CommandContext(ctx, "helm", "repo", "add", "argo", helmCfg.Repo)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		// Ignore if repo already exists
 		if !strings.Contains(string(output), "already exists") {
 			return fmt.Errorf("failed to add Helm repo: %w: %s", err, string(output))
 		}
@@ -177,14 +219,21 @@ func (b *Bootstrapper) installArgoCDHelm(ctx context.Context) error {
 
 	// Install ArgoCD
 	args := []string{
-		"upgrade", "--install", "argocd", "argo/argo-cd",
+		"upgrade", "--install", "argocd", fmt.Sprintf("argo/%s", helmCfg.Chart),
 		"--namespace", b.options.Namespace,
 		"--create-namespace",
 		"--wait",
 	}
 
-	if b.options.Version != "" {
+	if helmCfg.Version != "" {
+		args = append(args, "--version", helmCfg.Version)
+	} else if b.options.Version != "" {
 		args = append(args, "--version", b.options.Version)
+	}
+
+	// Add set values
+	for k, v := range helmCfg.SetValues {
+		args = append(args, "--set", fmt.Sprintf("%s=%s", k, v))
 	}
 
 	cmd = exec.CommandContext(ctx, "helm", args...)
@@ -197,16 +246,28 @@ func (b *Bootstrapper) installArgoCDHelm(ctx context.Context) error {
 
 // installArgoCDManifest installs ArgoCD using manifests.
 func (b *Bootstrapper) installArgoCDManifest(ctx context.Context) error {
-	version := b.options.Version
-	if version == "" {
-		version = "stable"
-	}
+	manifestCfg := b.getArgoCDManifestConfig()
 
-	manifestURL := fmt.Sprintf("https://raw.githubusercontent.com/argoproj/argo-cd/%s/manifests/install.yaml", version)
+	manifestURL := manifestCfg.URL
+	if manifestURL == "" {
+		version := b.options.Version
+		if version == "" {
+			version = "stable"
+		}
+		manifestURL = fmt.Sprintf("https://raw.githubusercontent.com/argoproj/argo-cd/%s/manifests/install.yaml", version)
+	}
 
 	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-n", b.options.Namespace, "-f", manifestURL)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to apply ArgoCD manifests: %w: %s", err, string(output))
+	}
+
+	// Apply additional manifests if specified
+	for _, path := range manifestCfg.Paths {
+		cmd = exec.CommandContext(ctx, "kubectl", "apply", "-n", b.options.Namespace, "-f", path)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to apply manifest %s: %w: %s", path, err, string(output))
+		}
 	}
 
 	return nil
@@ -214,10 +275,26 @@ func (b *Bootstrapper) installArgoCDManifest(ctx context.Context) error {
 
 // installArgoCDOLM installs ArgoCD using OLM.
 func (b *Bootstrapper) installArgoCDOLM(ctx context.Context) error {
+	olmCfg := b.getArgoCDOLMConfig()
+
 	// Check if OLM is installed
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "crd", "subscriptions.operators.coreos.com")
 	if _, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("OLM not installed on cluster")
+		return fmt.Errorf("OLM not installed on cluster. OLM is required for this installation mode")
+	}
+
+	// Create OperatorGroup
+	operatorGroup := fmt.Sprintf(`apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: argocd-operator
+  namespace: %s
+spec:
+  targetNamespaces:
+    - %s`, b.options.Namespace, b.options.Namespace)
+
+	if err := b.cluster.Apply(ctx, operatorGroup); err != nil {
+		return fmt.Errorf("failed to create OperatorGroup: %w", err)
 	}
 
 	// Create ArgoCD subscription
@@ -227,10 +304,11 @@ metadata:
   name: argocd-operator
   namespace: %s
 spec:
-  channel: alpha
+  channel: %s
   name: argocd-operator
-  source: community-operators
-  sourceNamespace: openshift-marketplace`, b.options.Namespace)
+  source: %s
+  sourceNamespace: %s
+  installPlanApproval: %s`, b.options.Namespace, olmCfg.Channel, olmCfg.Source, olmCfg.SourceNamespace, olmCfg.Approval)
 
 	return b.cluster.Apply(ctx, subscription)
 }
@@ -242,6 +320,8 @@ func (b *Bootstrapper) installFlux(ctx context.Context) error {
 		return b.installFluxManifest(ctx)
 	case ModeHelm:
 		return b.installFluxHelm(ctx)
+	case ModeKustomize:
+		return b.installFluxKustomize(ctx)
 	default:
 		return fmt.Errorf("unsupported installation mode for Flux: %s", b.options.Mode)
 	}
@@ -258,8 +338,10 @@ func (b *Bootstrapper) installFluxManifest(ctx context.Context) error {
 
 // installFluxHelm installs Flux using Helm.
 func (b *Bootstrapper) installFluxHelm(ctx context.Context) error {
+	helmCfg := b.getFluxHelmConfig()
+
 	// Add Flux Helm repo
-	cmd := exec.CommandContext(ctx, "helm", "repo", "add", "fluxcd", "https://fluxcd-community.github.io/helm-charts")
+	cmd := exec.CommandContext(ctx, "helm", "repo", "add", "fluxcd", helmCfg.Repo)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(output), "already exists") {
 			return fmt.Errorf("failed to add Flux Helm repo: %w: %s", err, string(output))
@@ -274,14 +356,21 @@ func (b *Bootstrapper) installFluxHelm(ctx context.Context) error {
 
 	// Install Flux
 	args := []string{
-		"upgrade", "--install", "flux2", "fluxcd/flux2",
+		"upgrade", "--install", "flux2", fmt.Sprintf("fluxcd/%s", helmCfg.Chart),
 		"--namespace", b.options.Namespace,
 		"--create-namespace",
 		"--wait",
 	}
 
-	if b.options.Version != "" {
+	if helmCfg.Version != "" {
+		args = append(args, "--version", helmCfg.Version)
+	} else if b.options.Version != "" {
 		args = append(args, "--version", b.options.Version)
+	}
+
+	// Add set values
+	for k, v := range helmCfg.SetValues {
+		args = append(args, "--set", fmt.Sprintf("%s=%s", k, v))
 	}
 
 	cmd = exec.CommandContext(ctx, "helm", args...)
@@ -290,6 +379,146 @@ func (b *Bootstrapper) installFluxHelm(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// installArgoCDKustomize installs ArgoCD using Kustomize.
+func (b *Bootstrapper) installArgoCDKustomize(ctx context.Context) error {
+	kustomizeCfg := b.getArgoCDKustomizeConfig()
+
+	kustomizeURL := kustomizeCfg.URL
+	if kustomizeURL == "" {
+		kustomizeURL = "https://github.com/argoproj/argo-cd/manifests/cluster-install"
+		if kustomizeCfg.Path != "" {
+			kustomizeURL = fmt.Sprintf("https://github.com/argoproj/argo-cd/manifests/%s", kustomizeCfg.Path)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-k", kustomizeURL, "-n", b.options.Namespace)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to apply ArgoCD Kustomize: %w: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// installFluxKustomize installs Flux using Kustomize.
+func (b *Bootstrapper) installFluxKustomize(ctx context.Context) error {
+	kustomizeCfg := b.getFluxKustomizeConfig()
+
+	kustomizeURL := kustomizeCfg.URL
+	if kustomizeURL == "" {
+		kustomizeURL = "https://github.com/fluxcd/flux2/manifests/install"
+		if kustomizeCfg.Path != "" {
+			kustomizeURL = fmt.Sprintf("https://github.com/fluxcd/flux2/manifests/%s", kustomizeCfg.Path)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-k", kustomizeURL, "-n", b.options.Namespace)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to apply Flux Kustomize: %w: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// getArgoCDHelmConfig returns the ArgoCD Helm configuration with defaults.
+func (b *Bootstrapper) getArgoCDHelmConfig() *HelmConfig {
+	if b.options.Helm != nil {
+		cfg := *b.options.Helm
+		if cfg.Repo == "" {
+			cfg.Repo = "https://argoproj.github.io/argo-helm"
+		}
+		if cfg.Chart == "" {
+			cfg.Chart = "argo-cd"
+		}
+		return &cfg
+	}
+	return &HelmConfig{
+		Repo:    "https://argoproj.github.io/argo-helm",
+		Chart:   "argo-cd",
+		Version: b.options.Version,
+	}
+}
+
+// getFluxHelmConfig returns the Flux Helm configuration with defaults.
+func (b *Bootstrapper) getFluxHelmConfig() *HelmConfig {
+	if b.options.Helm != nil {
+		cfg := *b.options.Helm
+		if cfg.Repo == "" {
+			cfg.Repo = "https://fluxcd-community.github.io/helm-charts"
+		}
+		if cfg.Chart == "" {
+			cfg.Chart = "flux2"
+		}
+		return &cfg
+	}
+	return &HelmConfig{
+		Repo:    "https://fluxcd-community.github.io/helm-charts",
+		Chart:   "flux2",
+		Version: b.options.Version,
+	}
+}
+
+// getArgoCDOLMConfig returns the ArgoCD OLM configuration with defaults.
+func (b *Bootstrapper) getArgoCDOLMConfig() *OLMConfig {
+	if b.options.OLM != nil {
+		cfg := *b.options.OLM
+		if cfg.Channel == "" {
+			cfg.Channel = "alpha"
+		}
+		if cfg.Source == "" {
+			cfg.Source = "community-operators"
+		}
+		if cfg.SourceNamespace == "" {
+			cfg.SourceNamespace = "openshift-marketplace"
+		}
+		if cfg.Approval == "" {
+			cfg.Approval = "Automatic"
+		}
+		return &cfg
+	}
+	return &OLMConfig{
+		Channel:         "alpha",
+		Source:          "community-operators",
+		SourceNamespace: "openshift-marketplace",
+		Approval:        "Automatic",
+	}
+}
+
+// getArgoCDManifestConfig returns the ArgoCD manifest configuration with defaults.
+func (b *Bootstrapper) getArgoCDManifestConfig() *ManifestConfig {
+	if b.options.Manifest != nil {
+		return b.options.Manifest
+	}
+	version := b.options.Version
+	if version == "" {
+		version = "stable"
+	}
+	return &ManifestConfig{
+		URL: fmt.Sprintf("https://raw.githubusercontent.com/argoproj/argo-cd/%s/manifests/install.yaml", version),
+	}
+}
+
+// getArgoCDKustomizeConfig returns the ArgoCD Kustomize configuration with defaults.
+func (b *Bootstrapper) getArgoCDKustomizeConfig() *KustomizeConfig {
+	if b.options.Kustomize != nil {
+		return b.options.Kustomize
+	}
+	return &KustomizeConfig{
+		URL:  "https://github.com/argoproj/argo-cd/manifests/cluster-install",
+		Path: "cluster-install",
+	}
+}
+
+// getFluxKustomizeConfig returns the Flux Kustomize configuration with defaults.
+func (b *Bootstrapper) getFluxKustomizeConfig() *KustomizeConfig {
+	if b.options.Kustomize != nil {
+		return b.options.Kustomize
+	}
+	return &KustomizeConfig{
+		URL:  "https://github.com/fluxcd/flux2/manifests/install",
+		Path: "install",
+	}
 }
 
 // waitForReady waits for the GitOps tool to be ready.
@@ -521,4 +750,86 @@ func (b *Bootstrapper) GetNamespace() string {
 // GetEnvFromToken retrieves a token from an environment variable.
 func GetEnvFromToken(envVar string) string {
 	return os.Getenv(envVar)
+}
+
+// ValidModes returns valid bootstrap modes for a tool on a platform.
+func ValidModes(tool Tool, platform string) []Mode {
+	modes := []Mode{ModeHelm, ModeManifest, ModeKustomize}
+
+	// OLM is only available on OpenShift
+	if platform == "openshift" && tool == ToolArgoCD {
+		modes = append(modes, ModeOLM)
+	}
+
+	return modes
+}
+
+// SuggestMode suggests the best bootstrap mode for a given platform and tool.
+func SuggestMode(tool Tool, platform string) Mode {
+	switch platform {
+	case "openshift":
+		if tool == ToolArgoCD {
+			return ModeOLM
+		}
+		return ModeHelm
+	case "eks", "aks", "gke":
+		return ModeHelm
+	default:
+		return ModeHelm
+	}
+}
+
+// IsValidMode checks if a mode is valid for a given tool and platform.
+func IsValidMode(mode Mode, tool Tool, platform string) bool {
+	validModes := ValidModes(tool, platform)
+	for _, m := range validModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// ModeDescription returns a human-readable description of a bootstrap mode.
+func ModeDescription(mode Mode) string {
+	switch mode {
+	case ModeHelm:
+		return "Helm chart - Official Helm charts with full customization support"
+	case ModeOLM:
+		return "Operator Lifecycle Manager - Managed installation via OpenShift OperatorHub"
+	case ModeManifest:
+		return "Raw manifests - Direct YAML manifests for air-gapped or custom setups"
+	case ModeKustomize:
+		return "Kustomize - Official Kustomize installations with overlay support"
+	default:
+		return string(mode)
+	}
+}
+
+// DefaultHelmConfig returns default Helm configuration for a tool.
+func DefaultHelmConfig(tool Tool) *HelmConfig {
+	switch tool {
+	case ToolArgoCD:
+		return &HelmConfig{
+			Repo:  "https://argoproj.github.io/argo-helm",
+			Chart: "argo-cd",
+		}
+	case ToolFlux:
+		return &HelmConfig{
+			Repo:  "https://fluxcd-community.github.io/helm-charts",
+			Chart: "flux2",
+		}
+	default:
+		return nil
+	}
+}
+
+// DefaultOLMConfig returns default OLM configuration for ArgoCD.
+func DefaultOLMConfig() *OLMConfig {
+	return &OLMConfig{
+		Channel:         "alpha",
+		Source:          "community-operators",
+		SourceNamespace: "openshift-marketplace",
+		Approval:        "Automatic",
+	}
 }

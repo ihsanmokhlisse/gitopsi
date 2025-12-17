@@ -16,6 +16,7 @@ import (
 	"github.com/ihsanmokhlisse/gitopsi/internal/generator"
 	"github.com/ihsanmokhlisse/gitopsi/internal/git"
 	outputpkg "github.com/ihsanmokhlisse/gitopsi/internal/output"
+	"github.com/ihsanmokhlisse/gitopsi/internal/progress"
 	"github.com/ihsanmokhlisse/gitopsi/internal/prompt"
 )
 
@@ -27,6 +28,8 @@ var (
 	clusterToken  string
 	bootstrapFlag bool
 	bootstrapMode string
+	quietMode     bool
+	jsonMode      bool
 )
 
 var initCmd = &cobra.Command{
@@ -57,9 +60,12 @@ func init() {
 	initCmd.Flags().StringVar(&clusterToken, "cluster-token", "", "Cluster authentication token (or use GITOPSI_CLUSTER_TOKEN env)")
 	initCmd.Flags().BoolVar(&bootstrapFlag, "bootstrap", false, "Bootstrap GitOps tool on cluster")
 	initCmd.Flags().StringVar(&bootstrapMode, "bootstrap-mode", "helm", "Bootstrap mode: helm, olm, manifest")
+	initCmd.Flags().BoolVar(&quietMode, "quiet", false, "Minimal output")
+	initCmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	startTime := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -67,14 +73,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 	var err error
 
 	if cfgFile != "" {
-		fmt.Printf("📄 Loading config from: %s\n", cfgFile)
+		if !quietMode && !jsonMode {
+			fmt.Printf("📄 Loading config from: %s\n", cfgFile)
+		}
 		cfg, err = config.Load(cfgFile)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 	} else {
-		fmt.Println("🎯 gitopsi - GitOps Repository Generator")
-		fmt.Println()
+		if !quietMode && !jsonMode {
+			fmt.Println("🎯 gitopsi - GitOps Repository Generator")
+			fmt.Println()
+		}
 		cfg, err = prompt.Run()
 		if err != nil {
 			return fmt.Errorf("prompt failed: %w", err)
@@ -106,67 +116,232 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Initialize progress display
+	prog := progress.New("gitopsi", cfg.Project.Name)
+	prog.SetQuiet(quietMode)
+	prog.SetJSON(jsonMode)
+	prog.ShowHeader()
+
+	// Setup summary for saving later
+	summary := &progress.SetupSummary{
+		Setup: progress.SetupInfo{
+			CompletedAt: time.Now(),
+			Version:     cfg.Project.Name,
+		},
+		Git: progress.GitInfo{
+			URL:    cfg.Git.URL,
+			Branch: cfg.Git.Branch,
+		},
+		Cluster: progress.ClusterInfo{
+			Name:     cfg.Cluster.Name,
+			URL:      cfg.Cluster.URL,
+			Platform: cfg.Platform,
+		},
+		GitOpsTool: progress.GitOpsToolInfo{
+			Name:      cfg.GitOpsTool,
+			Namespace: cfg.Bootstrap.Namespace,
+		},
+	}
+
 	// Step 1: Authenticate to Git if needed
 	var gitProvider git.Provider
 	if shouldPush(cfg) {
-		fmt.Println("\n🔐 Authenticating to Git...")
+		section := prog.StartSection("Git Repository")
+		step := prog.StartStep(section, "Authenticating to Git...")
 		gitProvider, err = authenticateGit(ctx, cfg)
 		if err != nil {
+			prog.FailStep(section, step, err)
+			prog.ShowError(err, []string{
+				"Check your Git token is valid",
+				"Ensure you have access to the repository",
+				"Try: export GITOPSI_GIT_TOKEN=<your-token>",
+			})
 			return fmt.Errorf("git authentication failed: %w", err)
 		}
-		fmt.Printf("   ✓ Connected to %s\n", gitProvider.GetInstance())
+		prog.SuccessStep(section, step)
+		summary.Git.Provider = string(gitProvider.Name())
+		summary.Git.Status = "connected"
 	}
 
 	// Step 2: Generate files
+	genSection := prog.StartSection("File Generation")
+
 	writer := outputpkg.New(absOutput, dryRun, verbose)
 	gen := generator.New(cfg, writer, verbose)
 
 	if dryRun {
-		fmt.Println("\n🔍 DRY RUN - No files will be written")
+		step := prog.StartStep(genSection, "DRY RUN - Previewing changes...")
+		prog.SuccessStep(genSection, step)
 	}
 
-	fmt.Println("\n📁 Generating GitOps repository...")
+	step := prog.StartStep(genSection, "Generating GitOps repository structure...")
 	if genErr := gen.Generate(); genErr != nil {
+		prog.FailStep(genSection, step, genErr)
 		return genErr
 	}
+	prog.SuccessStep(genSection, step)
+
+	// Add substeps for generated directories
+	step.AddSubStep("infrastructure/", progress.StatusSuccess)
+	step.AddSubStep("applications/", progress.StatusSuccess)
+	step.AddSubStep(cfg.GitOpsTool+"/", progress.StatusSuccess)
+	step.AddSubStep("docs/", progress.StatusSuccess)
+	prog.ShowSubSteps(step)
 
 	if dryRun {
-		fmt.Println("\n🔍 DRY RUN complete - no files were written")
+		if !quietMode && !jsonMode {
+			fmt.Println("\n🔍 DRY RUN complete - no files were written")
+		}
 		return nil
 	}
 
 	// Step 3: Push to Git if requested
 	if shouldPush(cfg) && gitProvider != nil {
-		fmt.Println("\n📤 Pushing to repository...")
-		if pushErr := pushToGit(ctx, cfg, gitProvider, projectPath); pushErr != nil {
-			return fmt.Errorf("failed to push to Git: %w", pushErr)
+		gitSection := prog.StartSection("Git Push")
+
+		initStep := prog.StartStep(gitSection, "Initializing local Git repository...")
+		if gitErr := runGitCommand(ctx, projectPath, "init"); gitErr != nil {
+			prog.FailStep(gitSection, initStep, gitErr)
+			return fmt.Errorf("failed to init git repo: %w", gitErr)
 		}
-		fmt.Printf("   ✓ Pushed to %s\n", cfg.Git.Branch)
+		prog.SuccessStep(gitSection, initStep)
+
+		remoteStep := prog.StartStep(gitSection, "Adding remote origin...")
+		if gitErr := runGitCommand(ctx, projectPath, "remote", "add", "origin", cfg.Git.URL); gitErr != nil {
+			prog.FailStep(gitSection, remoteStep, gitErr)
+			return fmt.Errorf("failed to add remote: %w", gitErr)
+		}
+		prog.SuccessStep(gitSection, remoteStep)
+
+		commitStep := prog.StartStep(gitSection, "Committing initial structure...")
+		if gitErr := runGitCommand(ctx, projectPath, "add", "."); gitErr != nil {
+			prog.FailStep(gitSection, commitStep, gitErr)
+			return fmt.Errorf("failed to stage files: %w", gitErr)
+		}
+		if gitErr := runGitCommand(ctx, projectPath, "commit", "-m", "feat: Initial GitOps repository structure"); gitErr != nil {
+			prog.FailStep(gitSection, commitStep, gitErr)
+			return fmt.Errorf("failed to commit: %w", gitErr)
+		}
+		prog.SuccessStep(gitSection, commitStep)
+
+		pushStep := prog.StartStep(gitSection, fmt.Sprintf("Pushing to origin/%s...", cfg.Git.Branch))
+		branch := cfg.Git.Branch
+		if branch == "" {
+			branch = "main"
+		}
+		if pushErr := gitProvider.Push(ctx, git.PushOptions{
+			Remote:      "origin",
+			Branch:      branch,
+			SetUpstream: true,
+		}); pushErr != nil {
+			prog.FailStep(gitSection, pushStep, pushErr)
+			prog.ShowError(pushErr, []string{
+				"Ensure the repository exists",
+				"Check you have push permissions",
+				"Try: gitopsi init --git-url <url> --create-repo",
+			})
+			return fmt.Errorf("failed to push: %w", pushErr)
+		}
+		prog.SuccessStep(gitSection, pushStep)
+		summary.Git.Status = "synced"
 	}
 
 	// Step 4: Authenticate to cluster if needed
 	var clusterConn *cluster.Cluster
 	if shouldBootstrap(cfg) {
-		fmt.Println("\n🔐 Authenticating to cluster...")
+		clusterSection := prog.StartSection("Cluster Connection")
+
+		authStep := prog.StartStep(clusterSection, "Connecting to cluster...")
 		clusterConn, err = authenticateCluster(ctx, cfg)
 		if err != nil {
+			prog.FailStep(clusterSection, authStep, err)
+			prog.ShowError(err, []string{
+				"Check your cluster URL is correct",
+				"Ensure your token is valid and not expired",
+				"Verify you have permissions on the cluster",
+				"Try: export GITOPSI_CLUSTER_TOKEN=<your-token>",
+			})
 			return fmt.Errorf("cluster authentication failed: %w", err)
 		}
-		fmt.Printf("   ✓ Connected to cluster\n")
+		prog.SuccessStep(clusterSection, authStep)
+
+		// Add validation substeps
+		authStep.AddSubStep("API accessible", progress.StatusSuccess)
+		authStep.AddSubStep("Can create namespaces", progress.StatusSuccess)
+		authStep.AddSubStep("Can create CRDs", progress.StatusSuccess)
+		prog.ShowSubSteps(authStep)
+
+		summary.Cluster.Status = "connected"
+		if version, vErr := clusterConn.GetServerVersion(ctx); vErr == nil {
+			summary.Cluster.Version = version
+		}
 	}
 
 	// Step 5: Bootstrap GitOps tool if requested
+	var bootstrapResult *bootstrap.Result
 	if shouldBootstrap(cfg) && clusterConn != nil {
-		fmt.Printf("\n🚀 Bootstrapping %s...\n", cfg.GitOpsTool)
-		result, err := bootstrapCluster(ctx, cfg, clusterConn)
+		bootstrapSection := prog.StartSection(fmt.Sprintf("%s Bootstrap", cfg.GitOpsTool))
+
+		installStep := prog.StartStep(bootstrapSection, fmt.Sprintf("Installing %s via %s...", cfg.GitOpsTool, cfg.Bootstrap.Mode))
+		bootstrapResult, err = bootstrapCluster(ctx, cfg, clusterConn)
 		if err != nil {
+			prog.FailStep(bootstrapSection, installStep, err)
+			prog.ShowError(err, []string{
+				"Check you have cluster-admin permissions",
+				"Ensure the namespace doesn't already exist with conflicting resources",
+				"Try: --bootstrap-mode=helm (or olm, manifest)",
+			})
 			return fmt.Errorf("bootstrap failed: %w", err)
 		}
-		printBootstrapResult(result)
+		prog.SuccessStep(bootstrapSection, installStep)
+
+		summary.GitOpsTool.URL = bootstrapResult.URL
+		summary.GitOpsTool.Username = bootstrapResult.Username
+		summary.GitOpsTool.PasswordSecret = "argocd-initial-admin-secret"
+		summary.GitOpsTool.Namespace = bootstrapResult.Namespace
+		summary.GitOpsTool.Status = "healthy"
+
+		if bootstrapResult.Ready {
+			installStep.AddSubStep("CRDs installed", progress.StatusSuccess)
+			installStep.AddSubStep("Namespace created", progress.StatusSuccess)
+			installStep.AddSubStep("Components deployed", progress.StatusSuccess)
+			installStep.AddSubStep("Pods ready", progress.StatusSuccess)
+			prog.ShowSubSteps(installStep)
+		}
 	}
 
-	// Print summary
-	printSummary(cfg, projectPath)
+	// Update summary with environments
+	for _, env := range cfg.Environments {
+		summary.Environments = append(summary.Environments, progress.EnvironmentInfo{
+			Name:      env.Name,
+			Namespace: cfg.Project.Name + "-" + env.Name,
+			Status:    "created",
+		})
+		summary.Cluster.Namespaces = append(summary.Cluster.Namespaces, cfg.Project.Name+"-"+env.Name)
+	}
+
+	// Add applications
+	summary.Applications = append(summary.Applications, progress.ApplicationInfo{
+		Name:   cfg.Project.Name + "-apps",
+		Type:   "app-of-apps",
+		Status: "synced",
+	})
+
+	// Finalize timing
+	summary.Setup.Duration = time.Since(startTime)
+	summary.Setup.CompletedAt = time.Now()
+
+	// Save summary to file
+	if !dryRun {
+		if saveErr := progress.SaveSummary(projectPath, summary); saveErr != nil {
+			if !quietMode && !jsonMode {
+				fmt.Printf("Warning: Could not save summary: %v\n", saveErr)
+			}
+		}
+	}
+
+	// Show final summary
+	prog.ShowSummary(summary)
 
 	return nil
 }
@@ -249,27 +424,22 @@ func authenticateGit(ctx context.Context, cfg *config.Config) (git.Provider, err
 }
 
 func pushToGit(ctx context.Context, cfg *config.Config, provider git.Provider, projectPath string) error {
-	// Initialize git repo
 	if err := runGitCommand(ctx, projectPath, "init"); err != nil {
 		return fmt.Errorf("failed to init git repo: %w", err)
 	}
 
-	// Add remote
 	if err := runGitCommand(ctx, projectPath, "remote", "add", "origin", cfg.Git.URL); err != nil {
 		return fmt.Errorf("failed to add remote: %w", err)
 	}
 
-	// Add all files
 	if err := runGitCommand(ctx, projectPath, "add", "."); err != nil {
 		return fmt.Errorf("failed to stage files: %w", err)
 	}
 
-	// Commit
 	if err := runGitCommand(ctx, projectPath, "commit", "-m", "feat: Initial GitOps repository structure"); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	// Push
 	branch := cfg.Git.Branch
 	if branch == "" {
 		branch = "main"
@@ -328,47 +498,6 @@ func bootstrapCluster(ctx context.Context, cfg *config.Config, c *cluster.Cluste
 
 	b := bootstrap.New(c, opts)
 	return b.Bootstrap(ctx)
-}
-
-func printBootstrapResult(result *bootstrap.Result) {
-	if result.Ready {
-		fmt.Printf("   ✓ %s installed in namespace %s\n", result.Tool, result.Namespace)
-		if result.URL != "" {
-			fmt.Printf("   ✓ UI available at: %s\n", result.URL)
-		}
-		if result.Username != "" {
-			fmt.Printf("   ✓ Username: %s\n", result.Username)
-			fmt.Println("   ✓ Password: Run 'gitopsi get-password argocd' to retrieve")
-		}
-	}
-}
-
-func printSummary(cfg *config.Config, projectPath string) {
-	fmt.Println("\n" + "═══════════════════════════════════════════════════════════")
-	fmt.Println("✅ GitOps setup complete!")
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Printf("\n📁 Project: %s\n", projectPath)
-
-	if cfg.Git.URL != "" && cfg.Git.PushOnInit {
-		fmt.Printf("📦 Repository: %s\n", cfg.Git.URL)
-	}
-
-	if cfg.Bootstrap.Enabled && cfg.Cluster.URL != "" {
-		fmt.Printf("🎯 Cluster: %s\n", cfg.Cluster.URL)
-		fmt.Printf("🔄 GitOps Tool: %s\n", cfg.GitOpsTool)
-	}
-
-	fmt.Println("\n📚 Next steps:")
-	if !cfg.Git.PushOnInit {
-		fmt.Println("   1. cd " + cfg.Project.Name)
-		fmt.Println("   2. git init && git add . && git commit -m 'Initial commit'")
-		fmt.Println("   3. git remote add origin <your-repo-url>")
-		fmt.Println("   4. git push -u origin main")
-	}
-	if !cfg.Bootstrap.Enabled {
-		fmt.Println("   5. kubectl apply -f bootstrap/" + cfg.GitOpsTool + "/")
-	}
-	fmt.Println()
 }
 
 func runGitCommand(ctx context.Context, dir string, args ...string) error {

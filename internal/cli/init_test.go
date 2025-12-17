@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
+	"github.com/ihsanmokhlisse/gitopsi/internal/progress"
 )
 
 func TestApplyFlagOverrides_GitURL(t *testing.T) {
@@ -225,33 +226,77 @@ func TestShouldBootstrap(t *testing.T) {
 	}
 }
 
-func TestPrintSummary(t *testing.T) {
-	cfg := config.NewDefaultConfig()
-	cfg.Project.Name = "test-project"
+func TestProgressSummary(t *testing.T) {
+	tempDir := t.TempDir()
 
-	// Should not panic
-	printSummary(cfg, "/tmp/test-project")
+	summary := &progress.SetupSummary{
+		Setup: progress.SetupInfo{
+			Version: "test-project",
+		},
+		Git: progress.GitInfo{
+			URL:    "https://github.com/org/repo.git",
+			Branch: "main",
+		},
+	}
+
+	// Save and load should work
+	err := progress.SaveSummary(tempDir, summary)
+	if err != nil {
+		t.Fatalf("SaveSummary failed: %v", err)
+	}
+
+	loaded, err := progress.LoadSummary(tempDir)
+	if err != nil {
+		t.Fatalf("LoadSummary failed: %v", err)
+	}
+
+	if loaded.Git.URL != summary.Git.URL {
+		t.Errorf("Expected Git URL %s, got %s", summary.Git.URL, loaded.Git.URL)
+	}
 }
 
-func TestPrintSummary_WithGitPush(t *testing.T) {
-	cfg := config.NewDefaultConfig()
-	cfg.Project.Name = "test-project"
-	cfg.Git.URL = "https://github.com/org/repo.git"
-	cfg.Git.PushOnInit = true
+func TestProgressSummary_WithGitPush(t *testing.T) {
+	summary := &progress.SetupSummary{
+		Setup: progress.SetupInfo{
+			Version: "test-project",
+		},
+		Git: progress.GitInfo{
+			URL:    "https://github.com/org/repo.git",
+			Branch: "main",
+			Status: "synced",
+		},
+	}
+
+	p := progress.New("Test", "test-project")
+	p.SetQuiet(true)
 
 	// Should not panic
-	printSummary(cfg, "/tmp/test-project")
+	p.ShowSummary(summary)
 }
 
-func TestPrintSummary_WithBootstrap(t *testing.T) {
-	cfg := config.NewDefaultConfig()
-	cfg.Project.Name = "test-project"
-	cfg.Bootstrap.Enabled = true
-	cfg.Cluster.URL = "https://api.cluster.example.com:6443"
-	cfg.GitOpsTool = "argocd"
+func TestProgressSummary_WithBootstrap(t *testing.T) {
+	summary := &progress.SetupSummary{
+		Setup: progress.SetupInfo{
+			Version: "test-project",
+		},
+		GitOpsTool: progress.GitOpsToolInfo{
+			Name:      "argocd",
+			URL:       "https://argocd.example.com",
+			Namespace: "argocd",
+			Status:    "healthy",
+		},
+		Cluster: progress.ClusterInfo{
+			URL:      "https://api.cluster.example.com:6443",
+			Platform: "kubernetes",
+			Status:   "connected",
+		},
+	}
+
+	p := progress.New("Test", "test-project")
+	p.SetQuiet(true)
 
 	// Should not panic
-	printSummary(cfg, "/tmp/test-project")
+	p.ShowSummary(summary)
 }
 
 func TestApplyFlagOverrides_AllFlags(t *testing.T) {

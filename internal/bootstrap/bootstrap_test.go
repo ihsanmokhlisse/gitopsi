@@ -57,7 +57,7 @@ func TestNew_Defaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := New(nil, Options{Tool: tt.tool})
+			b := New(nil, &Options{Tool: tt.tool})
 
 			if b.GetNamespace() != tt.expectedNamespace {
 				t.Errorf("GetNamespace() = %v, want %v", b.GetNamespace(), tt.expectedNamespace)
@@ -70,7 +70,7 @@ func TestNew_Defaults(t *testing.T) {
 }
 
 func TestNew_CustomNamespace(t *testing.T) {
-	b := New(nil, Options{
+	b := New(nil, &Options{
 		Tool:      ToolArgoCD,
 		Namespace: "custom-namespace",
 	})
@@ -81,7 +81,7 @@ func TestNew_CustomNamespace(t *testing.T) {
 }
 
 func TestNew_DefaultTimeout(t *testing.T) {
-	b := New(nil, Options{Tool: ToolArgoCD})
+	b := New(nil, &Options{Tool: ToolArgoCD})
 
 	if b.options.Timeout != 300 {
 		t.Errorf("Default timeout = %v, want 300", b.options.Timeout)
@@ -89,7 +89,7 @@ func TestNew_DefaultTimeout(t *testing.T) {
 }
 
 func TestNew_CustomTimeout(t *testing.T) {
-	b := New(nil, Options{
+	b := New(nil, &Options{
 		Tool:    ToolArgoCD,
 		Timeout: 600,
 	})
@@ -111,7 +111,7 @@ func TestGetMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := New(nil, Options{
+			b := New(nil, &Options{
 				Tool: ToolArgoCD,
 				Mode: tt.mode,
 			})
@@ -158,7 +158,7 @@ func TestGetEnvFromToken(t *testing.T) {
 }
 
 func TestOptions_AllFields(t *testing.T) {
-	opts := Options{
+	opts := &Options{
 		Tool:            ToolArgoCD,
 		Mode:            ModeHelm,
 		Namespace:       "test-ns",
@@ -250,4 +250,3 @@ func TestResult_Fields(t *testing.T) {
 		t.Errorf("Message = %v, want 'ArgoCD installed successfully'", result.Message)
 	}
 }
-

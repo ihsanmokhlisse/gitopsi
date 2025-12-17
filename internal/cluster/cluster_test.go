@@ -94,7 +94,7 @@ func TestPlatformConstants(t *testing.T) {
 func TestAuthenticate_Token(t *testing.T) {
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err := c.Authenticate(AuthOptions{
+	err := c.Authenticate(&AuthOptions{
 		Method: AuthToken,
 		Token:  "test-token-12345",
 	})
@@ -113,7 +113,7 @@ func TestAuthenticate_Token(t *testing.T) {
 func TestAuthenticate_Token_Empty(t *testing.T) {
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err := c.Authenticate(AuthOptions{
+	err := c.Authenticate(&AuthOptions{
 		Method: AuthToken,
 		Token:  "",
 	})
@@ -129,7 +129,7 @@ func TestAuthenticate_Token_FromEnv(t *testing.T) {
 
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err := c.Authenticate(AuthOptions{
+	err := c.Authenticate(&AuthOptions{
 		Method:   AuthToken,
 		TokenEnv: "TEST_CLUSTER_TOKEN",
 	})
@@ -152,7 +152,7 @@ func TestAuthenticate_Kubeconfig(t *testing.T) {
 
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err = c.Authenticate(AuthOptions{
+	err = c.Authenticate(&AuthOptions{
 		Method:     AuthKubeconfig,
 		Kubeconfig: kubeconfigPath,
 	})
@@ -168,7 +168,7 @@ func TestAuthenticate_Kubeconfig(t *testing.T) {
 func TestAuthenticate_Kubeconfig_NotFound(t *testing.T) {
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err := c.Authenticate(AuthOptions{
+	err := c.Authenticate(&AuthOptions{
 		Method:     AuthKubeconfig,
 		Kubeconfig: "/nonexistent/path/to/kubeconfig",
 	})
@@ -181,7 +181,7 @@ func TestAuthenticate_Kubeconfig_NotFound(t *testing.T) {
 func TestAuthenticate_UnsupportedMethod(t *testing.T) {
 	c := New("https://kubernetes.default.svc", "test", PlatformKubernetes)
 
-	err := c.Authenticate(AuthOptions{
+	err := c.Authenticate(&AuthOptions{
 		Method: AuthMethod("invalid"),
 	})
 
@@ -340,4 +340,3 @@ func TestGetKubeEnv(t *testing.T) {
 		t.Error("getKubeEnv() should include KUBECONFIG environment variable")
 	}
 }
-

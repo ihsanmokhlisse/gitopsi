@@ -64,7 +64,7 @@ type Bootstrapper struct {
 }
 
 // New creates a new Bootstrapper instance.
-func New(c *cluster.Cluster, opts Options) *Bootstrapper {
+func New(c *cluster.Cluster, opts *Options) *Bootstrapper {
 	if opts.Namespace == "" {
 		if opts.Tool == ToolArgoCD {
 			opts.Namespace = "argocd"
@@ -77,7 +77,7 @@ func New(c *cluster.Cluster, opts Options) *Bootstrapper {
 	}
 	return &Bootstrapper{
 		cluster: c,
-		options: &opts,
+		options: opts,
 	}
 }
 
@@ -434,7 +434,7 @@ spec:
 }
 
 // getArgoCDAccess gets the ArgoCD UI URL and initial admin password.
-func (b *Bootstrapper) getArgoCDAccess(ctx context.Context) (string, string, error) {
+func (b *Bootstrapper) getArgoCDAccess(ctx context.Context) (accessURL, accessPassword string, accessErr error) {
 	// Get password from secret
 	output, err := b.cluster.RunCommand(ctx, "get", "secret", "argocd-initial-admin-secret",
 		"-n", b.options.Namespace,
@@ -451,17 +451,18 @@ func (b *Bootstrapper) getArgoCDAccess(ctx context.Context) (string, string, err
 	}
 
 	// Try to get the ArgoCD server URL (assuming LoadBalancer or use port-forward)
-	url := fmt.Sprintf("https://argocd-server.%s.svc.cluster.local", b.options.Namespace)
+	accessURL = fmt.Sprintf("https://argocd-server.%s.svc.cluster.local", b.options.Namespace)
 
 	// Try to get external URL if available
 	extOutput, err := b.cluster.RunCommand(ctx, "get", "svc", "argocd-server",
 		"-n", b.options.Namespace,
 		"-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
 	if err == nil && strings.TrimSpace(extOutput) != "" {
-		url = fmt.Sprintf("https://%s", strings.TrimSpace(extOutput))
+		accessURL = fmt.Sprintf("https://%s", strings.TrimSpace(extOutput))
 	}
 
-	return url, strings.TrimSpace(string(passwordBytes)), nil
+	accessPassword = strings.TrimSpace(string(passwordBytes))
+	return accessURL, accessPassword, nil
 }
 
 // Uninstall removes the GitOps tool from the cluster.
@@ -493,8 +494,11 @@ func (b *Bootstrapper) Uninstall(ctx context.Context) error {
 		}
 	}
 
-	// Delete namespace
-	_, _ = b.cluster.RunCommand(ctx, "delete", "namespace", b.options.Namespace)
+	// Delete namespace (ignore error as it may not exist)
+	if _, delErr := b.cluster.RunCommand(ctx, "delete", "namespace", b.options.Namespace); delErr != nil {
+		// Namespace deletion is best-effort, log but don't fail
+		_ = delErr
+	}
 
 	return nil
 }
@@ -518,4 +522,3 @@ func (b *Bootstrapper) GetNamespace() string {
 func GetEnvFromToken(envVar string) string {
 	return os.Getenv(envVar)
 }
-

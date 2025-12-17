@@ -20,13 +20,13 @@ import (
 )
 
 var (
-	gitURL         string
-	gitToken       string
-	pushAfterInit  bool
-	clusterURL     string
-	clusterToken   string
-	bootstrapFlag  bool
-	bootstrapMode  string
+	gitURL        string
+	gitToken      string
+	pushAfterInit bool
+	clusterURL    string
+	clusterToken  string
+	bootstrapFlag bool
+	bootstrapMode string
 )
 
 var initCmd = &cobra.Command{
@@ -101,7 +101,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	projectPath := filepath.Join(absOutput, cfg.Project.Name)
 
 	if !dryRun {
-		if _, err := os.Stat(projectPath); err == nil {
+		if _, statErr := os.Stat(projectPath); statErr == nil {
 			return fmt.Errorf("directory already exists: %s", cfg.Project.Name)
 		}
 	}
@@ -126,8 +126,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\n📁 Generating GitOps repository...")
-	if err := gen.Generate(); err != nil {
-		return err
+	if genErr := gen.Generate(); genErr != nil {
+		return genErr
 	}
 
 	if dryRun {
@@ -138,8 +138,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Step 3: Push to Git if requested
 	if shouldPush(cfg) && gitProvider != nil {
 		fmt.Println("\n📤 Pushing to repository...")
-		if err := pushToGit(ctx, cfg, gitProvider, projectPath); err != nil {
-			return fmt.Errorf("failed to push to Git: %w", err)
+		if pushErr := pushToGit(ctx, cfg, gitProvider, projectPath); pushErr != nil {
+			return fmt.Errorf("failed to push to Git: %w", pushErr)
 		}
 		fmt.Printf("   ✓ Pushed to %s\n", cfg.Git.Branch)
 	}
@@ -289,7 +289,7 @@ func pushToGit(ctx context.Context, cfg *config.Config, provider git.Provider, p
 func authenticateCluster(ctx context.Context, cfg *config.Config) (*cluster.Cluster, error) {
 	c := cluster.New(cfg.Cluster.URL, cfg.Cluster.Name, cluster.Platform(cfg.Cluster.Platform))
 
-	authOpts := cluster.AuthOptions{
+	authOpts := &cluster.AuthOptions{
 		Method:     cluster.AuthMethod(cfg.Cluster.Auth.Method),
 		Token:      cfg.Cluster.Auth.Token,
 		TokenEnv:   cfg.Cluster.Auth.TokenEnv,
@@ -311,7 +311,7 @@ func authenticateCluster(ctx context.Context, cfg *config.Config) (*cluster.Clus
 }
 
 func bootstrapCluster(ctx context.Context, cfg *config.Config, c *cluster.Cluster) (*bootstrap.Result, error) {
-	opts := bootstrap.Options{
+	opts := &bootstrap.Options{
 		Tool:            bootstrap.Tool(cfg.GitOpsTool),
 		Mode:            bootstrap.Mode(cfg.Bootstrap.Mode),
 		Namespace:       cfg.Bootstrap.Namespace,

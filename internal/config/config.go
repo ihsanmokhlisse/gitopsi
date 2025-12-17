@@ -2,18 +2,18 @@ package config
 
 // Config represents the complete gitopsi configuration.
 type Config struct {
-	Project      Project        `yaml:"project"`
-	Output       Output         `yaml:"output"`
-	Git          GitConfig      `yaml:"git"`
-	Cluster      ClusterConfig  `yaml:"cluster"`
+	Project      Project         `yaml:"project"`
+	Output       Output          `yaml:"output"`
+	Git          GitConfig       `yaml:"git"`
+	Cluster      ClusterConfig   `yaml:"cluster"`
 	Bootstrap    BootstrapConfig `yaml:"bootstrap"`
-	Platform     string         `yaml:"platform"`
-	Scope        string         `yaml:"scope"`
-	GitOpsTool   string         `yaml:"gitops_tool"`
-	Environments []Environment  `yaml:"environments"`
-	Infra        Infrastructure `yaml:"infrastructure"`
-	Apps         []Application  `yaml:"applications"`
-	Docs         Documentation  `yaml:"docs"`
+	Platform     string          `yaml:"platform"`
+	Scope        string          `yaml:"scope"`
+	GitOpsTool   string          `yaml:"gitops_tool"`
+	Environments []Environment   `yaml:"environments"`
+	Infra        Infrastructure  `yaml:"infrastructure"`
+	Apps         []Application   `yaml:"applications"`
+	Docs         Documentation   `yaml:"docs"`
 }
 
 type Project struct {
@@ -60,24 +60,24 @@ type ClusterConfig struct {
 
 // ClusterAuth holds cluster authentication configuration.
 type ClusterAuth struct {
-	Method    string `yaml:"method"`    // kubeconfig, token, oidc, service-account
-	Token     string `yaml:"token"`     // Bearer token
-	TokenEnv  string `yaml:"token_env"` // Env var containing token
-	CACert    string `yaml:"ca_cert"`   // CA certificate path
-	SkipTLS   bool   `yaml:"skip_tls"`  // Skip TLS verification (not recommended)
+	Method   string `yaml:"method"`    // kubeconfig, token, oidc, service-account
+	Token    string `yaml:"token"`     // Bearer token
+	TokenEnv string `yaml:"token_env"` // Env var containing token
+	CACert   string `yaml:"ca_cert"`   // CA certificate path
+	SkipTLS  bool   `yaml:"skip_tls"`  // Skip TLS verification (not recommended)
 }
 
 // BootstrapConfig holds GitOps tool bootstrap configuration.
 type BootstrapConfig struct {
 	Enabled         bool   `yaml:"enabled"`
-	Tool            string `yaml:"tool"`              // argocd, flux
-	Mode            string `yaml:"mode"`              // helm, olm, manifest
-	Namespace       string `yaml:"namespace"`         // Namespace to install GitOps tool
-	Wait            bool   `yaml:"wait"`              // Wait for GitOps tool to be ready
-	Timeout         int    `yaml:"timeout"`           // Timeout in seconds
-	ConfigureRepo   bool   `yaml:"configure_repo"`    // Add repo to GitOps tool
+	Tool            string `yaml:"tool"`               // argocd, flux
+	Mode            string `yaml:"mode"`               // helm, olm, manifest
+	Namespace       string `yaml:"namespace"`          // Namespace to install GitOps tool
+	Wait            bool   `yaml:"wait"`               // Wait for GitOps tool to be ready
+	Timeout         int    `yaml:"timeout"`            // Timeout in seconds
+	ConfigureRepo   bool   `yaml:"configure_repo"`     // Add repo to GitOps tool
 	CreateAppOfApps bool   `yaml:"create_app_of_apps"` // Create root application
-	SyncInitial     bool   `yaml:"sync_initial"`      // Trigger initial sync
+	SyncInitial     bool   `yaml:"sync_initial"`       // Trigger initial sync
 }
 
 type Environment struct {

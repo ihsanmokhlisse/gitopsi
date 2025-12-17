@@ -60,8 +60,8 @@ func New(url, name string, platform Platform) *Cluster {
 }
 
 // Authenticate sets the authentication options for the cluster.
-func (c *Cluster) Authenticate(opts AuthOptions) error {
-	c.auth = &opts
+func (c *Cluster) Authenticate(opts *AuthOptions) error {
+	c.auth = opts
 
 	switch opts.Method {
 	case AuthKubeconfig:
@@ -96,8 +96,9 @@ func (c *Cluster) Authenticate(opts AuthOptions) error {
 
 	case AuthServiceAccount:
 		// Service account uses in-cluster config or mounted token
-		tokenPath := "/var/run/secrets/kubernetes.io/serviceaccount/token"
-		if _, err := os.Stat(tokenPath); os.IsNotExist(err) {
+		// #nosec G101 - This is a well-known Kubernetes path, not a hardcoded credential
+		saTokenPath := "/var/run/secrets/kubernetes.io/serviceaccount/token"
+		if _, err := os.Stat(saTokenPath); os.IsNotExist(err) {
 			return fmt.Errorf("service account token not found (not running in cluster?)")
 		}
 
@@ -345,4 +346,3 @@ func (c *Cluster) GetAuthMethod() AuthMethod {
 	}
 	return c.auth.Method
 }
-

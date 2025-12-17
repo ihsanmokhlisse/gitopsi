@@ -136,6 +136,14 @@ issues:
 
     - linters:
         - errcheck
+      text: "MarkFlagRequired"
+
+    - linters:
+        - errcheck
+      text: "MarkPersistentFlagRequired"
+
+    - linters:
+        - errcheck
       path: internal/cli/info.go
 
     - linters:

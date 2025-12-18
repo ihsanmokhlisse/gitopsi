@@ -40,3 +40,5 @@ docs-internal/
 CLAUDE.md
 claude.md
 gitopsi-darwin
+gitopsi-mac
+e2e-test-config.yaml

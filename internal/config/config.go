@@ -28,6 +28,21 @@ type Config struct {
 	Infra        Infrastructure      `yaml:"infrastructure"`
 	Apps         []Application       `yaml:"applications"`
 	Docs         Documentation       `yaml:"docs"`
+	Version      VersionConfig       `yaml:"version,omitempty"`
+}
+
+// VersionConfig defines target Kubernetes/OpenShift version for manifest compatibility.
+type VersionConfig struct {
+	// Kubernetes specifies the target Kubernetes version (e.g., "1.28", "1.27.5")
+	Kubernetes string `yaml:"kubernetes,omitempty"`
+	// OpenShift specifies the target OpenShift version (e.g., "4.14", "4.13.0")
+	OpenShift string `yaml:"openshift,omitempty"`
+	// AutoDetect enables automatic version detection from cluster
+	AutoDetect bool `yaml:"auto_detect,omitempty"`
+	// StrictMode fails on any deprecated APIs (default: warn only)
+	StrictMode bool `yaml:"strict_mode,omitempty"`
+	// WarnOnDeprecated emits warnings for deprecated APIs (default: true)
+	WarnOnDeprecated bool `yaml:"warn_on_deprecated,omitempty"`
 }
 
 // StructureConfig defines custom directory structure

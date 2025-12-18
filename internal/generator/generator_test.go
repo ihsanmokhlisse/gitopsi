@@ -143,6 +143,7 @@ func TestGenerateInfrastructure(t *testing.T) {
 	expectedFiles := []string{
 		"test-infra/infrastructure/base/namespaces/dev.yaml",
 		"test-infra/infrastructure/base/namespaces/prod.yaml",
+		"test-infra/infrastructure/base/namespaces/kustomization.yaml",
 		"test-infra/infrastructure/base/kustomization.yaml",
 		"test-infra/infrastructure/overlays/dev/kustomization.yaml",
 		"test-infra/infrastructure/overlays/prod/kustomization.yaml",
@@ -162,6 +163,87 @@ func TestGenerateInfrastructure(t *testing.T) {
 
 	if !strings.Contains(string(nsContent), "kind: Namespace") {
 		t.Error("Namespace file missing 'kind: Namespace'")
+	}
+
+	// Verify subdirectory kustomization.yaml has correct resources
+	nsKustomization, err := os.ReadFile(filepath.Join(tmpDir, "test-infra/infrastructure/base/namespaces/kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read namespaces kustomization.yaml: %v", err)
+	}
+
+	if !strings.Contains(string(nsKustomization), "dev.yaml") {
+		t.Error("Namespaces kustomization.yaml missing 'dev.yaml'")
+	}
+	if !strings.Contains(string(nsKustomization), "prod.yaml") {
+		t.Error("Namespaces kustomization.yaml missing 'prod.yaml'")
+	}
+}
+
+func TestGenerateInfrastructureSubdirKustomization(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "subdir-kustomize"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateInfrastructure()
+	if err != nil {
+		t.Fatalf("generateInfrastructure() error = %v", err)
+	}
+
+	// Verify all subdirectory kustomization.yaml files are created
+	subdirs := []string{"namespaces", "rbac", "network-policies", "resource-quotas"}
+	for _, subdir := range subdirs {
+		kustomizePath := filepath.Join(tmpDir, "subdir-kustomize/infrastructure/base", subdir, "kustomization.yaml")
+		if _, err := os.Stat(kustomizePath); os.IsNotExist(err) {
+			t.Errorf("Subdirectory kustomization.yaml not created: %s", kustomizePath)
+		}
+
+		content, err := os.ReadFile(kustomizePath)
+		if err != nil {
+			t.Fatalf("Failed to read %s/kustomization.yaml: %v", subdir, err)
+		}
+
+		// Each subdirectory should list the environment files
+		for _, env := range cfg.Environments {
+			expectedFile := env.Name + ".yaml"
+			if !strings.Contains(string(content), expectedFile) {
+				t.Errorf("%s/kustomization.yaml missing resource: %s", subdir, expectedFile)
+			}
+		}
+	}
+
+	// Verify base kustomization.yaml references subdirectories (not individual files)
+	baseKustomization, err := os.ReadFile(filepath.Join(tmpDir, "subdir-kustomize/infrastructure/base/kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read base kustomization.yaml: %v", err)
+	}
+
+	for _, subdir := range subdirs {
+		if !strings.Contains(string(baseKustomization), subdir+"/") {
+			t.Errorf("Base kustomization.yaml missing subdirectory reference: %s/", subdir)
+		}
 	}
 }
 

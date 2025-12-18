@@ -34,6 +34,7 @@ var (
 	jsonMode          bool
 	validateAfterInit bool
 	validateFailOn    string
+	presetFlag        string
 )
 
 var initCmd = &cobra.Command{
@@ -45,8 +46,15 @@ manifests, documentation, and scripts.
 Can run in interactive mode (default) or with a config file.
 Optionally push to Git repository and bootstrap GitOps tool on cluster.
 
+Presets:
+  minimal     - Basic namespace + deployment (single env)
+  standard    - Full infrastructure + apps (default)
+  enterprise  - All components + security + monitoring + policies
+
 Examples:
   gitopsi init                                    # Interactive mode
+  gitopsi init --preset minimal                   # Minimal preset
+  gitopsi init --preset enterprise                # Enterprise preset
   gitopsi init --config gitops.yaml               # Config file mode
   gitopsi init --dry-run                          # Preview without writing
   gitopsi init --git-url <url> --push             # Generate and push to Git
@@ -68,6 +76,7 @@ func init() {
 	initCmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON")
 	initCmd.Flags().BoolVar(&validateAfterInit, "validate", false, "Validate generated manifests")
 	initCmd.Flags().StringVar(&validateFailOn, "fail-on", "high", "Fail on severity: critical, high, medium, low")
+	initCmd.Flags().StringVar(&presetFlag, "preset", "", "Configuration preset: minimal, standard, enterprise")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -359,6 +368,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func applyFlagOverrides(cfg *config.Config) {
+	// Apply preset if specified
+	if presetFlag != "" {
+		cfg.Preset = config.Preset(presetFlag)
+		cfg.ApplyPreset()
+	} else if cfg.Preset != "" {
+		cfg.ApplyPreset()
+	}
+
 	if gitURL != "" {
 		cfg.Git.URL = gitURL
 		cfg.Output.URL = gitURL

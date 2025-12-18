@@ -9,6 +9,8 @@ import (
 func (g *Generator) generateInfrastructure() error {
 	fmt.Println("🏗️  Generating infrastructure...")
 
+	// Generate namespace files and collect filenames for kustomization
+	var namespaceFiles []string
 	for _, env := range g.Config.Environments {
 		nsData := map[string]string{
 			"Name": g.Config.Project.Name + "-" + env.Name,
@@ -20,11 +22,18 @@ func (g *Generator) generateInfrastructure() error {
 			return err
 		}
 
-		path := fmt.Sprintf("%s/infrastructure/base/namespaces/%s.yaml",
-			g.Config.Project.Name, env.Name)
+		filename := env.Name + ".yaml"
+		namespaceFiles = append(namespaceFiles, filename)
+		path := fmt.Sprintf("%s/infrastructure/base/namespaces/%s",
+			g.Config.Project.Name, filename)
 		if err := g.Writer.WriteFile(path, content); err != nil {
 			return err
 		}
+	}
+
+	// Generate kustomization.yaml for namespaces subdirectory
+	if err := g.generateSubdirKustomization("namespaces", namespaceFiles); err != nil {
+		return err
 	}
 
 	if g.Config.Infra.RBAC {
@@ -90,7 +99,24 @@ func (g *Generator) generateInfrastructure() error {
 	return nil
 }
 
+// generateSubdirKustomization creates a kustomization.yaml file for a subdirectory
+func (g *Generator) generateSubdirKustomization(subdir string, files []string) error {
+	kustomizeData := map[string]interface{}{
+		"Resources": files,
+	}
+
+	content, err := templates.Render("kubernetes/kustomization.yaml.tmpl", kustomizeData)
+	if err != nil {
+		return err
+	}
+
+	path := fmt.Sprintf("%s/infrastructure/base/%s/kustomization.yaml",
+		g.Config.Project.Name, subdir)
+	return g.Writer.WriteFile(path, content)
+}
+
 func (g *Generator) generateRBAC() error {
+	var rbacFiles []string
 	for _, env := range g.Config.Environments {
 		rbacData := map[string]string{
 			"Name":      g.Config.Project.Name,
@@ -103,16 +129,21 @@ func (g *Generator) generateRBAC() error {
 			return err
 		}
 
-		path := fmt.Sprintf("%s/infrastructure/base/rbac/%s.yaml",
-			g.Config.Project.Name, env.Name)
+		filename := env.Name + ".yaml"
+		rbacFiles = append(rbacFiles, filename)
+		path := fmt.Sprintf("%s/infrastructure/base/rbac/%s",
+			g.Config.Project.Name, filename)
 		if err := g.Writer.WriteFile(path, content); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	// Generate kustomization.yaml for rbac subdirectory
+	return g.generateSubdirKustomization("rbac", rbacFiles)
 }
 
 func (g *Generator) generateNetworkPolicies() error {
+	var npFiles []string
 	for _, env := range g.Config.Environments {
 		npData := map[string]string{
 			"Name":      g.Config.Project.Name,
@@ -125,13 +156,17 @@ func (g *Generator) generateNetworkPolicies() error {
 			return err
 		}
 
-		path := fmt.Sprintf("%s/infrastructure/base/network-policies/%s.yaml",
-			g.Config.Project.Name, env.Name)
+		filename := env.Name + ".yaml"
+		npFiles = append(npFiles, filename)
+		path := fmt.Sprintf("%s/infrastructure/base/network-policies/%s",
+			g.Config.Project.Name, filename)
 		if err := g.Writer.WriteFile(path, content); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	// Generate kustomization.yaml for network-policies subdirectory
+	return g.generateSubdirKustomization("network-policies", npFiles)
 }
 
 func (g *Generator) generateResourceQuotas() error {
@@ -146,6 +181,7 @@ func (g *Generator) generateResourceQuotas() error {
 		"MaxPods": "50", "MaxServices": "20", "MaxConfigMaps": "50", "MaxSecrets": "50",
 	}
 
+	var rqFiles []string
 	for _, env := range g.Config.Environments {
 		quota, ok := quotaDefaults[env.Name]
 		if !ok {
@@ -171,11 +207,15 @@ func (g *Generator) generateResourceQuotas() error {
 			return err
 		}
 
-		path := fmt.Sprintf("%s/infrastructure/base/resource-quotas/%s.yaml",
-			g.Config.Project.Name, env.Name)
+		filename := env.Name + ".yaml"
+		rqFiles = append(rqFiles, filename)
+		path := fmt.Sprintf("%s/infrastructure/base/resource-quotas/%s",
+			g.Config.Project.Name, filename)
 		if err := g.Writer.WriteFile(path, content); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	// Generate kustomization.yaml for resource-quotas subdirectory
+	return g.generateSubdirKustomization("resource-quotas", rqFiles)
 }

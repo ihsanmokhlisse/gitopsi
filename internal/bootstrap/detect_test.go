@@ -46,6 +46,14 @@ func TestArgoCDTypeConstants(t *testing.T) {
 	assert.Equal(t, ArgoCDType("not_installed"), ArgoCDTypeNotInstalled)
 }
 
+func TestArgoCDStateConstants(t *testing.T) {
+	assert.Equal(t, ArgoCDState("not_installed"), ArgoCDStateNotInstalled)
+	assert.Equal(t, ArgoCDState("namespace_only"), ArgoCDStateNamespaceOnly)
+	assert.Equal(t, ArgoCDState("partial_install"), ArgoCDStatePartialInstall)
+	assert.Equal(t, ArgoCDState("not_running"), ArgoCDStateNotRunning)
+	assert.Equal(t, ArgoCDState("running"), ArgoCDStateRunning)
+}
+
 func TestInstallMethodConstants(t *testing.T) {
 	assert.Equal(t, InstallMethod("operator"), InstallMethodOperator)
 	assert.Equal(t, InstallMethod("manifest"), InstallMethodManifest)
@@ -173,16 +181,20 @@ func TestDetermineHealthStatus(t *testing.T) {
 
 func TestArgoCDDetectionResult_Summary(t *testing.T) {
 	result := &ArgoCDDetectionResult{
-		Installed:      true,
-		Type:           ArgoCDTypeRedHat,
-		InstallMethod:  InstallMethodOLM,
-		OperatorSource: OperatorSourceRedHat,
-		Namespace:      "openshift-gitops",
-		Version:        "v2.9.0",
-		URL:            "https://argocd.apps.cluster.com",
-		Running:        true,
-		HealthStatus:   "healthy",
-		AppCount:       5,
+		Installed:       true,
+		State:           ArgoCDStateRunning,
+		StateMessage:    "All 2 components running",
+		Type:            ArgoCDTypeRedHat,
+		InstallMethod:   InstallMethodOLM,
+		OperatorSource:  OperatorSourceRedHat,
+		Namespace:       "openshift-gitops",
+		Version:         "v2.9.0",
+		URL:             "https://argocd.apps.cluster.com",
+		Running:         true,
+		HealthStatus:    "healthy",
+		AppCount:        5,
+		TotalComponents: 2,
+		ReadyComponents: 2,
 		Components: []ArgoCDComponent{
 			{Name: "server", Ready: true, Available: 1, Replicas: 1},
 			{Name: "repo-server", Ready: true, Available: 1, Replicas: 1},
@@ -192,6 +204,8 @@ func TestArgoCDDetectionResult_Summary(t *testing.T) {
 	summary := result.Summary()
 
 	assert.Contains(t, summary, "ArgoCD Detection Summary")
+	assert.Contains(t, summary, "State:         running")
+	assert.Contains(t, summary, "Message:       All 2 components running")
 	assert.Contains(t, summary, "Installed:     true")
 	assert.Contains(t, summary, "Type:          redhat")
 	assert.Contains(t, summary, "Namespace:     openshift-gitops")
@@ -202,8 +216,153 @@ func TestArgoCDDetectionResult_Summary(t *testing.T) {
 	assert.Contains(t, summary, "Running:       true")
 	assert.Contains(t, summary, "Health:        healthy")
 	assert.Contains(t, summary, "Applications:  5")
+	assert.Contains(t, summary, "2/2 ready")
 	assert.Contains(t, summary, "✅ server")
 	assert.Contains(t, summary, "✅ repo-server")
+}
+
+func TestArgoCDDetectionResult_StateIcon(t *testing.T) {
+	tests := []struct {
+		state ArgoCDState
+		icon  string
+	}{
+		{ArgoCDStateRunning, "✅"},
+		{ArgoCDStatePartialInstall, "⚠️"},
+		{ArgoCDStateNotRunning, "⚠️"},
+		{ArgoCDStateNamespaceOnly, "❌"},
+		{ArgoCDStateNotInstalled, "❌"},
+		{ArgoCDState("unknown"), "❓"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			result := &ArgoCDDetectionResult{State: tt.state}
+			assert.Equal(t, tt.icon, result.StateIcon())
+		})
+	}
+}
+
+func TestArgoCDDetectionResult_IsReady(t *testing.T) {
+	tests := []struct {
+		state ArgoCDState
+		ready bool
+	}{
+		{ArgoCDStateRunning, true},
+		{ArgoCDStatePartialInstall, false},
+		{ArgoCDStateNotRunning, false},
+		{ArgoCDStateNamespaceOnly, false},
+		{ArgoCDStateNotInstalled, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			result := &ArgoCDDetectionResult{State: tt.state}
+			assert.Equal(t, tt.ready, result.IsReady())
+		})
+	}
+}
+
+func TestArgoCDDetectionResult_NeedsBootstrap(t *testing.T) {
+	tests := []struct {
+		state     ArgoCDState
+		needsBoot bool
+	}{
+		{ArgoCDStateNotInstalled, true},
+		{ArgoCDStateNamespaceOnly, true},
+		{ArgoCDStatePartialInstall, false},
+		{ArgoCDStateNotRunning, false},
+		{ArgoCDStateRunning, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			result := &ArgoCDDetectionResult{State: tt.state}
+			assert.Equal(t, tt.needsBoot, result.NeedsBootstrap())
+		})
+	}
+}
+
+func TestDetermineState(t *testing.T) {
+	d := NewDetector("", 30*time.Second)
+
+	tests := []struct {
+		name        string
+		result      *ArgoCDDetectionResult
+		wantState   ArgoCDState
+		wantMessage string
+	}{
+		{
+			name: "namespace only - no components",
+			result: &ArgoCDDetectionResult{
+				Namespace:  "openshift-gitops",
+				Components: []ArgoCDComponent{},
+			},
+			wantState:   ArgoCDStateNamespaceOnly,
+			wantMessage: "Namespace 'openshift-gitops' exists but no ArgoCD components found",
+		},
+		{
+			name: "partial install - less than 3 components",
+			result: &ArgoCDDetectionResult{
+				Namespace: "argocd",
+				Components: []ArgoCDComponent{
+					{Name: "server", Ready: true},
+					{Name: "repo-server", Ready: true},
+				},
+				TotalComponents: 2,
+				ReadyComponents: 2,
+			},
+			wantState: ArgoCDStatePartialInstall,
+		},
+		{
+			name: "not running - components exist but not ready",
+			result: &ArgoCDDetectionResult{
+				Namespace: "argocd",
+				Components: []ArgoCDComponent{
+					{Name: "server", Ready: false},
+					{Name: "repo-server", Ready: false},
+					{Name: "app-controller", Ready: false},
+				},
+				TotalComponents: 3,
+				ReadyComponents: 0,
+			},
+			wantState: ArgoCDStateNotRunning,
+		},
+		{
+			name: "partial install - some not ready",
+			result: &ArgoCDDetectionResult{
+				Namespace: "argocd",
+				Components: []ArgoCDComponent{
+					{Name: "server", Ready: true},
+					{Name: "repo-server", Ready: false},
+					{Name: "app-controller", Ready: true},
+				},
+				TotalComponents: 3,
+				ReadyComponents: 2,
+			},
+			wantState: ArgoCDStatePartialInstall,
+		},
+		{
+			name: "running - all components ready",
+			result: &ArgoCDDetectionResult{
+				Namespace: "argocd",
+				Components: []ArgoCDComponent{
+					{Name: "server", Ready: true},
+					{Name: "repo-server", Ready: true},
+					{Name: "app-controller", Ready: true},
+				},
+				TotalComponents: 3,
+				ReadyComponents: 3,
+			},
+			wantState: ArgoCDStateRunning,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, _ := d.determineState(tt.result)
+			assert.Equal(t, tt.wantState, state)
+		})
+	}
 }
 
 func TestArgoCDDetectionResult_SummaryWithIssues(t *testing.T) {

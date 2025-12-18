@@ -19,6 +19,17 @@ const (
 	ArgoCDTypeNotInstalled ArgoCDType = "not_installed"
 )
 
+// ArgoCDState represents the installation state of ArgoCD
+type ArgoCDState string
+
+const (
+	ArgoCDStateNotInstalled   ArgoCDState = "not_installed"   // No namespace found
+	ArgoCDStateNamespaceOnly  ArgoCDState = "namespace_only"  // Namespace exists, no workloads
+	ArgoCDStatePartialInstall ArgoCDState = "partial_install" // Some components missing
+	ArgoCDStateNotRunning     ArgoCDState = "not_running"     // All components exist, not ready
+	ArgoCDStateRunning        ArgoCDState = "running"         // Fully operational
+)
+
 type InstallMethod string
 
 const (
@@ -59,6 +70,8 @@ type ArgoCDComponent struct {
 
 type ArgoCDDetectionResult struct {
 	Installed       bool              `json:"installed"`
+	State           ArgoCDState       `json:"state"`
+	StateMessage    string            `json:"state_message"`
 	Type            ArgoCDType        `json:"type"`
 	InstallMethod   InstallMethod     `json:"install_method"`
 	OperatorSource  OperatorSource    `json:"operator_source,omitempty"`
@@ -67,6 +80,8 @@ type ArgoCDDetectionResult struct {
 	URL             string            `json:"url,omitempty"`
 	Running         bool              `json:"running"`
 	Components      []ArgoCDComponent `json:"components"`
+	TotalComponents int               `json:"total_components"`
+	ReadyComponents int               `json:"ready_components"`
 	HealthStatus    string            `json:"health_status"`
 	SyncStatus      string            `json:"sync_status,omitempty"`
 	AppCount        int               `json:"app_count"`
@@ -108,10 +123,32 @@ func (d *Detector) DetectArgoCD(ctx context.Context) (*ArgoCDDetectionResult, er
 
 	if result.Namespace == "" {
 		result.Installed = false
+		result.State = ArgoCDStateNotInstalled
+		result.StateMessage = "ArgoCD is not installed - no known namespace found"
 		result.Type = ArgoCDTypeNotInstalled
 		result.HealthStatus = "not_installed"
 		result.Issues = append(result.Issues, "ArgoCD is not installed - no known namespace found")
 		result.Recommendations = append(result.Recommendations, "Use 'gitopsi init --bootstrap' to install ArgoCD")
+		result.Recommendations = append(result.Recommendations, "Or install OpenShift GitOps operator from OperatorHub")
+		return result, nil
+	}
+
+	// Namespace exists, detect components
+	result.Components = d.detectComponents(ctx, result.Namespace)
+	result.TotalComponents = len(result.Components)
+	result.ReadyComponents = d.countReadyComponents(result.Components)
+
+	// Determine state based on components
+	result.State, result.StateMessage = d.determineState(result)
+
+	if result.State == ArgoCDStateNamespaceOnly {
+		result.Installed = false
+		result.Type = ArgoCDTypeUnknown
+		result.InstallMethod = InstallMethodUnknown
+		result.HealthStatus = "namespace_only"
+		result.Issues = append(result.Issues, "Namespace exists but no ArgoCD components found")
+		result.Recommendations = append(result.Recommendations, "Install ArgoCD using: gitopsi init --bootstrap")
+		result.Recommendations = append(result.Recommendations, "Or install OpenShift GitOps operator from OperatorHub")
 		return result, nil
 	}
 
@@ -125,7 +162,6 @@ func (d *Detector) DetectArgoCD(ctx context.Context) (*ArgoCDDetectionResult, er
 
 	result.Version = d.detectVersion(ctx, result.Namespace)
 	result.URL = d.detectURL(ctx, result.Namespace)
-	result.Components = d.detectComponents(ctx, result.Namespace)
 	result.Running = d.isRunning(result.Components)
 	result.HealthStatus = d.determineHealthStatus(result.Components)
 	result.AppCount = d.countApplications(ctx, result.Namespace)
@@ -133,6 +169,41 @@ func (d *Detector) DetectArgoCD(ctx context.Context) (*ArgoCDDetectionResult, er
 	d.analyzeAndRecommend(result)
 
 	return result, nil
+}
+
+func (d *Detector) countReadyComponents(components []ArgoCDComponent) int {
+	count := 0
+	for _, c := range components {
+		if c.Ready {
+			count++
+		}
+	}
+	return count
+}
+
+func (d *Detector) determineState(result *ArgoCDDetectionResult) (ArgoCDState, string) {
+	if len(result.Components) == 0 {
+		return ArgoCDStateNamespaceOnly, fmt.Sprintf("Namespace '%s' exists but no ArgoCD components found", result.Namespace)
+	}
+
+	readyCount := result.ReadyComponents
+	totalCount := result.TotalComponents
+
+	// Check for expected minimum components (server, repo-server, application-controller)
+	expectedComponents := 3
+	if totalCount < expectedComponents {
+		return ArgoCDStatePartialInstall, fmt.Sprintf("Only %d/%d expected components found", totalCount, expectedComponents)
+	}
+
+	if readyCount == 0 {
+		return ArgoCDStateNotRunning, fmt.Sprintf("All %d components exist but none are running", totalCount)
+	}
+
+	if readyCount < totalCount {
+		return ArgoCDStatePartialInstall, fmt.Sprintf("%d/%d components ready", readyCount, totalCount)
+	}
+
+	return ArgoCDStateRunning, fmt.Sprintf("All %d components running", totalCount)
 }
 
 func (d *Detector) namespaceExists(ctx context.Context, namespace string) bool {
@@ -500,25 +571,31 @@ func (r *ArgoCDDetectionResult) ToJSON() (string, error) {
 func (r *ArgoCDDetectionResult) Summary() string {
 	var sb strings.Builder
 	sb.WriteString("=== ArgoCD Detection Summary ===\n")
+	sb.WriteString(fmt.Sprintf("State:         %s\n", r.State))
+	sb.WriteString(fmt.Sprintf("Message:       %s\n", r.StateMessage))
 	sb.WriteString(fmt.Sprintf("Installed:     %v\n", r.Installed))
-	sb.WriteString(fmt.Sprintf("Type:          %s\n", r.Type))
-	sb.WriteString(fmt.Sprintf("Namespace:     %s\n", r.Namespace))
-	sb.WriteString(fmt.Sprintf("Install Method: %s\n", r.InstallMethod))
-	if r.OperatorSource != "" && r.OperatorSource != OperatorSourceUnknown {
-		sb.WriteString(fmt.Sprintf("Operator Source: %s\n", r.OperatorSource))
+	if r.Namespace != "" {
+		sb.WriteString(fmt.Sprintf("Namespace:     %s\n", r.Namespace))
 	}
-	if r.Version != "" {
-		sb.WriteString(fmt.Sprintf("Version:       %s\n", r.Version))
+	if r.Installed {
+		sb.WriteString(fmt.Sprintf("Type:          %s\n", r.Type))
+		sb.WriteString(fmt.Sprintf("Install Method: %s\n", r.InstallMethod))
+		if r.OperatorSource != "" && r.OperatorSource != OperatorSourceUnknown {
+			sb.WriteString(fmt.Sprintf("Operator Source: %s\n", r.OperatorSource))
+		}
+		if r.Version != "" {
+			sb.WriteString(fmt.Sprintf("Version:       %s\n", r.Version))
+		}
+		if r.URL != "" {
+			sb.WriteString(fmt.Sprintf("URL:           %s\n", r.URL))
+		}
+		sb.WriteString(fmt.Sprintf("Running:       %v\n", r.Running))
+		sb.WriteString(fmt.Sprintf("Health:        %s\n", r.HealthStatus))
+		sb.WriteString(fmt.Sprintf("Applications:  %d\n", r.AppCount))
 	}
-	if r.URL != "" {
-		sb.WriteString(fmt.Sprintf("URL:           %s\n", r.URL))
-	}
-	sb.WriteString(fmt.Sprintf("Running:       %v\n", r.Running))
-	sb.WriteString(fmt.Sprintf("Health:        %s\n", r.HealthStatus))
-	sb.WriteString(fmt.Sprintf("Applications:  %d\n", r.AppCount))
 
 	if len(r.Components) > 0 {
-		sb.WriteString("\nComponents:\n")
+		sb.WriteString(fmt.Sprintf("\nComponents (%d/%d ready):\n", r.ReadyComponents, r.TotalComponents))
 		for _, c := range r.Components {
 			status := "✅"
 			if !c.Ready {
@@ -543,4 +620,28 @@ func (r *ArgoCDDetectionResult) Summary() string {
 	}
 
 	return sb.String()
+}
+
+// StateIcon returns an icon representing the current state
+func (r *ArgoCDDetectionResult) StateIcon() string {
+	switch r.State {
+	case ArgoCDStateRunning:
+		return "✅"
+	case ArgoCDStatePartialInstall, ArgoCDStateNotRunning:
+		return "⚠️"
+	case ArgoCDStateNamespaceOnly, ArgoCDStateNotInstalled:
+		return "❌"
+	default:
+		return "❓"
+	}
+}
+
+// IsReady returns true if ArgoCD is fully operational
+func (r *ArgoCDDetectionResult) IsReady() bool {
+	return r.State == ArgoCDStateRunning
+}
+
+// NeedsBootstrap returns true if ArgoCD needs to be installed
+func (r *ArgoCDDetectionResult) NeedsBootstrap() bool {
+	return r.State == ArgoCDStateNotInstalled || r.State == ArgoCDStateNamespaceOnly
 }

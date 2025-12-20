@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitopsi-product-test-apps-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: applications
+  source:
+    repoURL: https://github.com/org/gitopsi-product-test.git
+    targetRevision: HEAD
+    path: applications/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitopsi-product-test-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+

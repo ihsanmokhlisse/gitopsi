@@ -334,6 +334,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 		summary.GitOpsTool.URL = bootstrapResult.URL
 		summary.GitOpsTool.Username = bootstrapResult.Username
+		summary.GitOpsTool.Password = bootstrapResult.Password
 		summary.GitOpsTool.PasswordSecret = "argocd-initial-admin-secret"
 		summary.GitOpsTool.Namespace = bootstrapResult.Namespace
 		summary.GitOpsTool.Status = "healthy"

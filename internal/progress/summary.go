@@ -51,7 +51,8 @@ type GitOpsToolInfo struct {
 	Name           string `yaml:"name"`
 	URL            string `yaml:"url"`
 	Username       string `yaml:"username"`
-	PasswordSecret string `yaml:"password_secret"`
+	Password       string `yaml:"password,omitempty"`
+	PasswordSecret string `yaml:"password_secret,omitempty"`
 	Namespace      string `yaml:"namespace"`
 	Version        string `yaml:"version"`
 	Status         string `yaml:"status"`
@@ -136,10 +137,15 @@ func (p *Progress) showGitOpsSection(tool *GitOpsToolInfo) {
 	fmt.Println()
 	pterm.DefaultSection.WithLevel(2).Println(tool.Name)
 
+	passwordDisplay := tool.Password
+	if passwordDisplay == "" {
+		passwordDisplay = fmt.Sprintf("Run: gitopsi get-password %s", tool.Name)
+	}
+
 	data := pterm.TableData{
 		{"URL:", tool.URL},
 		{"Username:", tool.Username},
-		{"Password:", fmt.Sprintf("Run: gitopsi get-password %s", tool.Name)},
+		{"Password:", passwordDisplay},
 		{"Namespace:", tool.Namespace},
 		{"Version:", tool.Version},
 		{"Status:", formatStatus(tool.Status)},
@@ -149,8 +155,13 @@ func (p *Progress) showGitOpsSection(tool *GitOpsToolInfo) {
 
 	fmt.Println()
 	pterm.Info.Println("CLI Login:")
-	pterm.Printf("  %s login %s --username %s --password <password>\n",
-		tool.Name, tool.URL, tool.Username)
+	if tool.Password != "" {
+		pterm.Printf("  %s login %s --username %s --password %s\n",
+			tool.Name, tool.URL, tool.Username, tool.Password)
+	} else {
+		pterm.Printf("  %s login %s --username %s --password <password>\n",
+			tool.Name, tool.URL, tool.Username)
+	}
 }
 
 func (p *Progress) showClusterSection(cluster *ClusterInfo) {

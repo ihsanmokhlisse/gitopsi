@@ -1,0 +1,37 @@
+# Gitleaks configuration for gitopsi
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+title = "gitopsi gitleaks config"
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''testdata/''',
+    '''test-output/''',
+    '''\.git/''',
+    '''go\.sum$''',
+]
+regexTarget = "match"
+
+# Allow example tokens in documentation
+[[rules]]
+id = "example-tokens"
+description = "Example tokens in docs"
+regex = '''(EXAMPLE|REPLACE_WITH|YOUR_TOKEN|placeholder|xxxxxxxx)'''
+allowlist = {paths = ['''\.md$''', '''docs/''']}
+
+# Ignore test fixtures
+[[rules]]
+id = "test-fixtures"
+description = "Test fixture files"
+allowlist = {paths = ['''_test\.go$''', '''testdata/''']}
+
+# Allow base64 encoded example data in templates
+[[rules]]
+id = "template-examples"
+description = "Template example data"
+allowlist = {paths = ['''\.tmpl$''', '''internal/templates/''']}
+

@@ -20,6 +20,10 @@ coverage.html
 !.goreleaser.yaml
 !.golangci.yaml
 !.editorconfig
+!.pre-commit-config.yaml
+!.yamllint.yaml
+!.markdownlint.yaml
+!.gitleaks.toml
 
 # OS
 .DS_Store

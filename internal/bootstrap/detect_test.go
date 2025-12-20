@@ -359,7 +359,7 @@ func TestDetermineState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			state, _ := d.determineState(tt.result)
+			state, _ := d.DetermineState(tt.result)
 			assert.Equal(t, tt.wantState, state)
 		})
 	}

@@ -139,7 +139,7 @@ func (d *Detector) DetectArgoCD(ctx context.Context) (*ArgoCDDetectionResult, er
 	result.ReadyComponents = d.countReadyComponents(result.Components)
 
 	// Determine state based on components
-	result.State, result.StateMessage = d.determineState(result)
+	result.State, result.StateMessage = d.DetermineState(result)
 
 	if result.State == ArgoCDStateNamespaceOnly {
 		result.Installed = false
@@ -181,7 +181,7 @@ func (d *Detector) countReadyComponents(components []ArgoCDComponent) int {
 	return count
 }
 
-func (d *Detector) determineState(result *ArgoCDDetectionResult) (ArgoCDState, string) {
+func (d *Detector) DetermineState(result *ArgoCDDetectionResult) (ArgoCDState, string) {
 	if len(result.Components) == 0 {
 		return ArgoCDStateNamespaceOnly, fmt.Sprintf("Namespace '%s' exists but no ArgoCD components found", result.Namespace)
 	}

@@ -346,3 +346,69 @@ func (c *Cluster) GetAuthMethod() AuthMethod {
 	}
 	return c.auth.Method
 }
+
+// ClusterInfo holds information detected from kubeconfig.
+type ClusterInfo struct {
+	URL      string
+	Name     string
+	Context  string
+	Platform Platform
+}
+
+// DetectFromKubeconfig detects cluster information from the current kubeconfig context.
+func DetectFromKubeconfig(ctx context.Context) (*ClusterInfo, error) {
+	info := &ClusterInfo{
+		Platform: PlatformKubernetes,
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster URL from kubeconfig: %w", err)
+	}
+	info.URL = strings.TrimSpace(string(output))
+
+	if info.URL == "" {
+		return nil, fmt.Errorf("no cluster URL found in kubeconfig - is kubectl configured?")
+	}
+
+	cmd = exec.CommandContext(ctx, "kubectl", "config", "current-context")
+	output, err = cmd.Output()
+	if err == nil {
+		info.Context = strings.TrimSpace(string(output))
+	}
+
+	cmd = exec.CommandContext(ctx, "kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].name}")
+	output, err = cmd.Output()
+	if err == nil {
+		info.Name = strings.TrimSpace(string(output))
+	}
+
+	info.Platform = DetectPlatform(ctx)
+
+	return info, nil
+}
+
+// DetectPlatform detects the Kubernetes platform type.
+func DetectPlatform(ctx context.Context) Platform {
+	cmd := exec.CommandContext(ctx, "kubectl", "api-resources", "--api-group=route.openshift.io")
+	output, _ := cmd.Output()
+	if strings.Contains(string(output), "routes") {
+		return PlatformOpenShift
+	}
+
+	cmd = exec.CommandContext(ctx, "kubectl", "get", "nodes", "-o", "jsonpath={.items[0].spec.providerID}")
+	output, _ = cmd.Output()
+	providerID := strings.ToLower(string(output))
+
+	switch {
+	case strings.Contains(providerID, "azure"):
+		return PlatformAKS
+	case strings.Contains(providerID, "aws"):
+		return PlatformEKS
+	case strings.Contains(providerID, "gce"):
+		return PlatformGKE
+	default:
+		return PlatformKubernetes
+	}
+}

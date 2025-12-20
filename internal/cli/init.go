@@ -272,6 +272,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if shouldBootstrap(cfg) {
 		clusterSection := prog.StartSection("Cluster Connection")
 
+		if cfg.Cluster.URL == "" {
+			detectStep := prog.StartStep(clusterSection, "Auto-detecting cluster from kubeconfig...")
+			if err := autoDetectCluster(ctx, cfg); err != nil {
+				prog.FailStep(clusterSection, detectStep, err)
+				prog.ShowError(err, []string{
+					"No cluster URL provided and auto-detection failed",
+					"Ensure kubectl is configured with a valid context",
+					"Or set cluster.url in your config file",
+					"Or use --cluster flag",
+				})
+				return fmt.Errorf("cluster detection failed: %w", err)
+			}
+			prog.SuccessStep(clusterSection, detectStep)
+			fmt.Printf("   Detected: %s\n", cfg.Cluster.URL)
+		}
+
 		authStep := prog.StartStep(clusterSection, "Connecting to cluster...")
 		clusterConn, err = authenticateCluster(ctx, cfg)
 		if err != nil {
@@ -421,7 +437,28 @@ func shouldPush(cfg *config.Config) bool {
 }
 
 func shouldBootstrap(cfg *config.Config) bool {
-	return cfg.Bootstrap.Enabled && cfg.Cluster.URL != ""
+	return cfg.Bootstrap.Enabled
+}
+
+func autoDetectCluster(ctx context.Context, cfg *config.Config) error {
+	if cfg.Cluster.URL != "" {
+		return nil
+	}
+
+	info, err := cluster.DetectFromKubeconfig(ctx)
+	if err != nil {
+		return fmt.Errorf("cluster auto-detection failed: %w", err)
+	}
+
+	cfg.Cluster.URL = info.URL
+	if cfg.Cluster.Name == "" {
+		cfg.Cluster.Name = info.Name
+	}
+	if cfg.Platform == "" {
+		cfg.Platform = string(info.Platform)
+	}
+
+	return nil
 }
 
 func authenticateGit(ctx context.Context, cfg *config.Config) (git.Provider, error) {

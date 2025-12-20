@@ -93,6 +93,8 @@ git:
   branch: main
   push_on_init: true
 
+# NOTE: cluster.url is NOT needed - gitopsi auto-detects from kubeconfig!
+
 environments:
   - name: dev
     namespace: product-test-dev

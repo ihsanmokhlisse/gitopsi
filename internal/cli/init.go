@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 
 	"github.com/ihsanmokhlisse/gitopsi/internal/bootstrap"
@@ -158,25 +159,135 @@ func runInit(cmd *cobra.Command, args []string) error {
 		},
 	}
 
-	// Step 1: Authenticate to Git if needed
+	// ============================================================
+	// PREFLIGHT CHECKS - Validate everything before starting
+	// ============================================================
 	var gitProvider git.Provider
+	preflightSection := prog.StartSection("Preflight Checks")
+	preflightPassed := true
+	var preflightErrors []string
+
+	// Check 1: Git Token (if push enabled)
 	if shouldPush(cfg) {
-		section := prog.StartSection("Git Repository")
-		step := prog.StartStep(section, "Authenticating to Git...")
+		gitCheckStep := prog.StartStep(preflightSection, "Checking Git credentials...")
 		gitProvider, err = authenticateGit(ctx, cfg)
 		if err != nil {
-			prog.FailStep(section, step, err)
-			prog.ShowError(err, []string{
-				"Check your Git token is valid",
-				"Ensure you have access to the repository",
-				"Try: export GITOPSI_GIT_TOKEN=<your-token>",
-			})
-			return fmt.Errorf("git authentication failed: %w", err)
+			prog.FailStep(preflightSection, gitCheckStep, err)
+			preflightPassed = false
+			preflightErrors = append(preflightErrors, fmt.Sprintf("Git: %v", err))
+		} else {
+			prog.SuccessStep(preflightSection, gitCheckStep)
+			gitCheckStep.AddSubStep(fmt.Sprintf("Provider: %s", gitProvider.Name()), progress.StatusSuccess)
+			gitCheckStep.AddSubStep("Token valid", progress.StatusSuccess)
+			gitCheckStep.AddSubStep("Repository accessible", progress.StatusSuccess)
+			prog.ShowSubSteps(gitCheckStep)
+			summary.Git.Provider = string(gitProvider.Name())
+			summary.Git.Status = "connected"
 		}
-		prog.SuccessStep(section, step)
-		summary.Git.Provider = string(gitProvider.Name())
-		summary.Git.Status = "connected"
+	} else {
+		gitCheckStep := prog.StartStep(preflightSection, "Git push disabled (skipping)")
+		prog.SuccessStep(preflightSection, gitCheckStep)
 	}
+
+	// Check 2: Cluster Connectivity (if bootstrap enabled)
+	if shouldBootstrap(cfg) {
+		clusterCheckStep := prog.StartStep(preflightSection, "Checking cluster connectivity...")
+
+		// Auto-detect cluster if not specified
+		if cfg.Cluster.URL == "" {
+			if detectErr := autoDetectCluster(ctx, cfg); detectErr != nil {
+				prog.FailStep(preflightSection, clusterCheckStep, detectErr)
+				preflightPassed = false
+				preflightErrors = append(preflightErrors, fmt.Sprintf("Cluster detection: %v", detectErr))
+			}
+		}
+
+		if cfg.Cluster.URL != "" {
+			// Test cluster connection
+			testCluster := cluster.New(cfg.Cluster.URL, cfg.Cluster.Name, cluster.Platform(cfg.Platform))
+			if authErr := testCluster.Authenticate(&cluster.AuthOptions{Method: cluster.AuthKubeconfig}); authErr != nil {
+				prog.FailStep(preflightSection, clusterCheckStep, authErr)
+				preflightPassed = false
+				preflightErrors = append(preflightErrors, fmt.Sprintf("Cluster auth: %v", authErr))
+			} else if connErr := testCluster.TestConnection(ctx); connErr != nil {
+				prog.FailStep(preflightSection, clusterCheckStep, connErr)
+				preflightPassed = false
+				preflightErrors = append(preflightErrors, fmt.Sprintf("Cluster connection: %v", connErr))
+			} else {
+				prog.SuccessStep(preflightSection, clusterCheckStep)
+				clusterCheckStep.AddSubStep(fmt.Sprintf("URL: %s", cfg.Cluster.URL), progress.StatusSuccess)
+				clusterCheckStep.AddSubStep("API accessible", progress.StatusSuccess)
+
+				// Detect platform
+				detectedPlatform := cluster.DetectPlatform(ctx)
+				cfg.Platform = string(detectedPlatform)
+				clusterCheckStep.AddSubStep(fmt.Sprintf("Platform: %s", detectedPlatform), progress.StatusSuccess)
+
+				// Get version
+				if version, vErr := testCluster.GetServerVersion(ctx); vErr == nil && version != "" {
+					clusterCheckStep.AddSubStep(fmt.Sprintf("Version: %s", version), progress.StatusSuccess)
+					summary.Cluster.Version = version
+				}
+
+				prog.ShowSubSteps(clusterCheckStep)
+				summary.Cluster.URL = cfg.Cluster.URL
+				summary.Cluster.Platform = cfg.Platform
+			}
+		}
+	} else {
+		clusterCheckStep := prog.StartStep(preflightSection, "Bootstrap disabled (skipping cluster check)")
+		prog.SuccessStep(preflightSection, clusterCheckStep)
+	}
+
+	// Check 3: Security validation
+	securityStep := prog.StartStep(preflightSection, "Validating security settings...")
+	securityIssues := []string{}
+
+	if shouldPush(cfg) && cfg.Git.URL != "" {
+		if !strings.HasPrefix(cfg.Git.URL, "https://") && !strings.HasPrefix(cfg.Git.URL, "git@") {
+			securityIssues = append(securityIssues, "Git URL is not using secure protocol (https/ssh)")
+		}
+	}
+
+	if len(securityIssues) > 0 {
+		prog.WarningStep(preflightSection, securityStep, strings.Join(securityIssues, "; "))
+	} else {
+		prog.SuccessStep(preflightSection, securityStep)
+		securityStep.AddSubStep("Git: secure connection", progress.StatusSuccess)
+		if shouldBootstrap(cfg) {
+			securityStep.AddSubStep("Cluster: TLS enabled", progress.StatusSuccess)
+		}
+		prog.ShowSubSteps(securityStep)
+	}
+
+	// STOP if preflight checks failed
+	if !preflightPassed {
+		fmt.Println()
+		pterm.Error.Println("Preflight checks failed! Fix the following issues:")
+		fmt.Println()
+		for i, errMsg := range preflightErrors {
+			pterm.Printf("  %d. %s\n", i+1, errMsg)
+		}
+		fmt.Println()
+		pterm.Info.Println("💡 Suggestions:")
+		if shouldPush(cfg) {
+			pterm.Println("   • Generate a GitHub token: https://github.com/settings/tokens")
+			pterm.Println("   • Set token: export GITOPSI_GIT_TOKEN=<your-token>")
+		}
+		if shouldBootstrap(cfg) {
+			pterm.Println("   • Ensure kubectl is configured: kubectl cluster-info")
+			pterm.Println("   • Or specify cluster URL in config: cluster.url")
+		}
+		return fmt.Errorf("preflight checks failed")
+	}
+
+	fmt.Println()
+	pterm.Success.Println("All preflight checks passed!")
+	fmt.Println()
+
+	// ============================================================
+	// MAIN EXECUTION - All checks passed, proceed with setup
+	// ============================================================
 
 	// Step 2: Generate files
 	genSection := prog.StartSection("File Generation")

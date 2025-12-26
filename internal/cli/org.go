@@ -12,7 +12,6 @@ import (
 )
 
 var (
-	orgName         string
 	orgDomain       string
 	orgTeamName     string
 	orgProjectPath  string

@@ -249,9 +249,9 @@ func (m *Marketplace) PublishPattern(ctx context.Context, patternDir, registryNa
 			return os.MkdirAll(destPath, 0755)
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
 		}
 
 		return os.WriteFile(destPath, data, 0644)

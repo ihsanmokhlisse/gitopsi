@@ -23,7 +23,6 @@ var (
 	authNamespace  string
 	authSecretName string
 	authPlatform   string
-	authRegistry   string
 	authFormat     string
 	authRoleARN    string
 	authTenantID   string
@@ -238,7 +237,8 @@ func runAuthAddGit(cmd *cobra.Command, args []string) error {
 		if authSSHKeyFile == "" {
 			return fmt.Errorf("--ssh-key is required for SSH authentication")
 		}
-		key, err := auth.LoadSSHKeyFromFile(authSSHKeyFile)
+		var key string
+		key, err = auth.LoadSSHKeyFromFile(authSSHKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to load SSH key: %w", err)
 		}

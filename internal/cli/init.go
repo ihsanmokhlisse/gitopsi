@@ -386,7 +386,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 		if cfg.Cluster.URL == "" {
 			detectStep := prog.StartStep(clusterSection, "Auto-detecting cluster from kubeconfig...")
-			if err := autoDetectCluster(ctx, cfg); err != nil {
+			err = autoDetectCluster(ctx, cfg)
+			if err != nil {
 				prog.FailStep(clusterSection, detectStep, err)
 				prog.ShowError(err, []string{
 					"No cluster URL provided and auto-detection failed",

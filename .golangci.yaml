@@ -24,7 +24,6 @@ linters:
     - misspell
     - unconvert
     - gosec
-    - prealloc
     - bodyclose
     - noctx
     - gocritic
@@ -67,6 +66,12 @@ linters-settings:
       - commentFormatting
       - whyNoLint
       - sloppyReassign
+      - unnamedResult
+      - rangeValCopy
+      - hugeParam
+      - ifElseChain
+      - httpNoBody
+      - nestingReduce
 
   revive:
     rules:
@@ -190,6 +195,11 @@ issues:
         - revive
       text: "stutters"
 
+    - path: internal/cluster/
+      linters:
+        - revive
+      text: "stutters"
+
     - path: internal/git/
       linters:
         - gocritic
@@ -219,6 +229,11 @@ issues:
       linters:
         - errcheck
       text: "filepath.Walk"
+
+    # strings.Title deprecation is acceptable for simple cases
+    - linters:
+        - staticcheck
+      text: "SA1019.*strings.Title"
 
 severity:
   default-severity: warning

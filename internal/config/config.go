@@ -291,7 +291,7 @@ func NewDefaultConfig() *Config {
 			Enabled:         false,
 			Tool:            "argocd",
 			Mode:            "helm",
-			Namespace:       "argocd",
+			Namespace:       "", // Empty by default - will be set based on platform
 			Wait:            true,
 			Timeout:         300,
 			ConfigureRepo:   true,

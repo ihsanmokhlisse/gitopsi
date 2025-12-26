@@ -648,6 +648,9 @@ func (s *Sanitizer) SanitizePath(path string) string {
 	path = strings.ReplaceAll(path, "//", "/")
 	path = filepath.Clean(path)
 
+	// Always use forward slashes for GitOps compatibility (YAML paths must be portable)
+	path = filepath.ToSlash(path)
+
 	// Remove leading slash for relative paths
 	path = strings.TrimPrefix(path, "/")
 

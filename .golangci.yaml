@@ -146,6 +146,32 @@ issues:
         - errcheck
       path: internal/cli/info.go
 
+    # pterm spinner errors are safe to ignore
+    - linters:
+        - errcheck
+      text: "pterm.DefaultSpinner"
+
+    # LoadSSHKnownHosts is optional
+    - linters:
+        - errcheck
+      text: "LoadSSHKnownHosts"
+
+    # version.NewMapper errors are handled contextually
+    - linters:
+        - errcheck
+      text: "version.NewMapper"
+
+    # resp.Body.Close errors are commonly ignored
+    - linters:
+        - errcheck
+      text: "resp.Body.Close"
+
+    # buildDepTree errors are handled internally
+    - linters:
+        - errcheck
+      path: internal/marketplace/
+      text: "buildDepTree"
+
     - linters:
         - revive
       text: "exported: comment"

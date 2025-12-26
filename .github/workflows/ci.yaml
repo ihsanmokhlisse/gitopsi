@@ -353,20 +353,17 @@ jobs:
           cd /tmp/e2e-presets
           
           for preset in minimal standard enterprise; do
-            cat > ${preset}.yaml << EOFCONFIG
-            project:
-              name: e2e-${preset}
-            platform: kubernetes
-            gitops_tool: argocd
-            git:
-              url: https://github.com/test/repo.git
-            preset: ${preset}
-            environments:
-              - name: dev
-            EOFCONFIG
-            
-            # Strip leading spaces from the config file
-            sed -i 's/^            //' ${preset}.yaml
+            printf '%s\n' \
+              "project:" \
+              "  name: e2e-${preset}" \
+              "platform: kubernetes" \
+              "gitops_tool: argocd" \
+              "git:" \
+              "  url: https://github.com/test/repo.git" \
+              "preset: ${preset}" \
+              "environments:" \
+              "  - name: dev" \
+              > ${preset}.yaml
             
             $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config ${preset}.yaml
             test -d e2e-${preset}

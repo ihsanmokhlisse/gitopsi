@@ -3,9 +3,10 @@ package cli
 import (
 	"testing"
 
-	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
 )
 
 func TestOperatorCmd_Exists(t *testing.T) {

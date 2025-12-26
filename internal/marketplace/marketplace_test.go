@@ -818,15 +818,18 @@ func TestRegistryTypeConstants(t *testing.T) {
 }
 
 func TestGetInstallPath(t *testing.T) {
+	// Use filepath.Join for platform-agnostic path construction
+	projectPath := filepath.Join(string(filepath.Separator), "project")
+
 	tests := []struct {
 		projectPath string
 		category    string
 		patternName string
 		expected    string
 	}{
-		{"/project", "observability", "prometheus", "/project/infrastructure/observability/prometheus"},
-		{"/project", "", "test", "/project/infrastructure/other/test"},
-		{"/project", "Security", "vault", "/project/infrastructure/security/vault"},
+		{projectPath, "observability", "prometheus", filepath.Join(projectPath, "infrastructure", "observability", "prometheus")},
+		{projectPath, "", "test", filepath.Join(projectPath, "infrastructure", "other", "test")},
+		{projectPath, "Security", "vault", filepath.Join(projectPath, "infrastructure", "security", "vault")},
 	}
 
 	for _, tt := range tests {

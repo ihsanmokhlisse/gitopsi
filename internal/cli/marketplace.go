@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ihsanmokhlisse/gitopsi/internal/marketplace"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
+
+	"github.com/ihsanmokhlisse/gitopsi/internal/marketplace"
 )
 
 var (

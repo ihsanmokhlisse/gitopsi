@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGenerator_GenerateOperators_CreatesSubscription(t *testing.T) {

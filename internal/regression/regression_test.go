@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ihsanmokhlisse/gitopsi/internal/bootstrap"
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 	"github.com/ihsanmokhlisse/gitopsi/internal/generator"
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestRegression_34_OpenshiftUsesOpenshiftGitopsNamespace(t *testing.T) {

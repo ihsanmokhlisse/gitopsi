@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
 )
 
 var operatorProjectPath string

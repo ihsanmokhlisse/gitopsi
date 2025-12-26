@@ -6,14 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 	"github.com/ihsanmokhlisse/gitopsi/internal/environment"
 	"github.com/ihsanmokhlisse/gitopsi/internal/generator"
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
 	"github.com/ihsanmokhlisse/gitopsi/internal/validate"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 func TestIntegration_InitFlow_ConfigToGeneration(t *testing.T) {

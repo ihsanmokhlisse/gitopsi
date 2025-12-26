@@ -6,9 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ihsanmokhlisse/gitopsi/internal/auth"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
+
+	"github.com/ihsanmokhlisse/gitopsi/internal/auth"
 )
 
 var (

@@ -1,0 +1,35 @@
+project:
+  name: gitopsi-e2e
+  description: "Complete E2E Test - gitopsi only"
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+
+git:
+  url: https://github.com/ihsanmokhlisse/gitopsitest
+  branch: main
+  push_on_init: true
+
+environments:
+  - name: dev
+    namespace: gitopsi-dev
+
+applications:
+  - name: nginx
+    type: deployment
+    replicas: 2
+    image: nginxinc/nginx-unprivileged:1.25-alpine
+    port: 8080
+
+bootstrap:
+  enabled: true
+  mode: helm
+  namespace: argocd
+  wait: true
+  timeout: 300
+  configure_repo: true
+  create_app_of_apps: true
+
+cluster:
+  context: kind-gitopsi-test

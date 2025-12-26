@@ -5,20 +5,98 @@ import (
 
 	"github.com/ihsanmokhlisse/gitopsi/internal/config"
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
+	"github.com/ihsanmokhlisse/gitopsi/internal/version"
 )
 
+// Generator handles the generation of GitOps repository structure and manifests.
 type Generator struct {
-	Config  *config.Config
-	Writer  *output.Writer
-	Verbose bool
+	Config        *config.Config
+	Writer        *output.Writer
+	Verbose       bool
+	VersionMapper *version.Mapper
+	Deprecations  []version.DeprecationResult
 }
 
+// New creates a new Generator with the given configuration.
 func New(cfg *config.Config, writer *output.Writer, verbose bool) *Generator {
-	return &Generator{
-		Config:  cfg,
-		Writer:  writer,
-		Verbose: verbose,
+	g := &Generator{
+		Config:       cfg,
+		Writer:       writer,
+		Verbose:      verbose,
+		Deprecations: []version.DeprecationResult{},
 	}
+
+	// Initialize version mapper if target version is specified
+	targetVersion := ""
+	if cfg.Version.Kubernetes != "" {
+		targetVersion = cfg.Version.Kubernetes
+	} else if cfg.Version.OpenShift != "" {
+		// Convert OpenShift version to Kubernetes version
+		if k8sVersion, ok := version.GetKubernetesVersionForOpenShift(cfg.Version.OpenShift); ok {
+			targetVersion = k8sVersion
+		}
+	}
+
+	if targetVersion != "" {
+		vm, err := version.NewMapper(targetVersion, cfg.Platform)
+		if err == nil {
+			g.VersionMapper = vm
+		}
+	} else {
+		// Create a mapper without target version for default API versions
+		vm, _ := version.NewMapper("", cfg.Platform)
+		g.VersionMapper = vm
+	}
+
+	return g
+}
+
+// GetAPIVersion returns the appropriate API version for a resource kind.
+func (g *Generator) GetAPIVersion(kind string) string {
+	if g.VersionMapper != nil {
+		return g.VersionMapper.GetAPIVersion(kind)
+	}
+	if api, ok := version.DefaultAPIVersions[kind]; ok {
+		return api
+	}
+	return ""
+}
+
+// CheckDeprecation checks if an API version is deprecated and records it.
+func (g *Generator) CheckDeprecation(kind, apiVersion, name, filePath string) {
+	if g.VersionMapper == nil {
+		return
+	}
+
+	if result := g.VersionMapper.CheckDeprecation(kind, apiVersion); result != nil {
+		result.Name = name
+		result.FilePath = filePath
+		g.Deprecations = append(g.Deprecations, *result)
+
+		// Log warning if verbose
+		if g.Verbose || g.Config.Version.WarnOnDeprecated {
+			if result.Severity == "error" {
+				fmt.Printf("  ❌ %s: %s\n", filePath, result.Message)
+			} else {
+				fmt.Printf("  ⚠️  %s: %s\n", filePath, result.Message)
+			}
+		}
+	}
+}
+
+// GetDeprecations returns all recorded deprecations.
+func (g *Generator) GetDeprecations() []version.DeprecationResult {
+	return g.Deprecations
+}
+
+// HasCriticalDeprecations checks if there are any critical (error-level) deprecations.
+func (g *Generator) HasCriticalDeprecations() bool {
+	for _, d := range g.Deprecations {
+		if d.Severity == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Generator) Generate() error {
@@ -56,6 +134,10 @@ func (g *Generator) Generate() error {
 
 	if err := g.generateScripts(); err != nil {
 		return fmt.Errorf("failed to generate scripts: %w", err)
+	}
+
+	if err := g.generateOperators(); err != nil {
+		return fmt.Errorf("failed to generate operators: %w", err)
 	}
 
 	fmt.Printf("\n✅ Generated: %s/\n", g.Config.Project.Name)

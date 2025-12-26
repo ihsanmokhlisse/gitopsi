@@ -51,11 +51,13 @@ func (g *Generator) generateDocs() error {
 func (g *Generator) generateBootstrap() error {
 	fmt.Println("🔧 Generating bootstrap...")
 
+	argoCDNamespace := g.getArgoCDNamespace()
+
 	bootstrapContent := fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
-`, g.Config.GitOpsTool)
+`, argoCDNamespace)
 
 	path := fmt.Sprintf("%s/bootstrap/%s/namespace.yaml",
 		g.Config.Project.Name, g.Config.GitOpsTool)

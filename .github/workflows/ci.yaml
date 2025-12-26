@@ -253,34 +253,37 @@ jobs:
           mkdir -p /tmp/e2e-k8s
           cd /tmp/e2e-k8s
           
-          cat > config.yaml << 'EOF'
-project:
-  name: e2e-kubernetes
-  description: "E2E Test - Kubernetes"
-platform: kubernetes
-scope: both
-gitops_tool: argocd
-git:
-  url: https://github.com/test/repo.git
-environments:
-  - name: dev
-  - name: staging
-  - name: prod
-infrastructure:
-  namespaces: true
-  rbac: true
-  network_policies: true
-  resource_quotas: true
-applications:
-  - name: api
-    image: nginx:latest
-    port: 80
-    replicas: 2
-docs:
-  readme: true
-  architecture: true
-  onboarding: true
-EOF
+          cat > config.yaml << 'EOFCONFIG'
+          project:
+            name: e2e-kubernetes
+            description: "E2E Test - Kubernetes"
+          platform: kubernetes
+          scope: both
+          gitops_tool: argocd
+          git:
+            url: https://github.com/test/repo.git
+          environments:
+            - name: dev
+            - name: staging
+            - name: prod
+          infrastructure:
+            namespaces: true
+            rbac: true
+            network_policies: true
+            resource_quotas: true
+          applications:
+            - name: api
+              image: nginx:latest
+              port: 80
+              replicas: 2
+          docs:
+            readme: true
+            architecture: true
+            onboarding: true
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' config.yaml
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml
           
@@ -298,24 +301,27 @@ EOF
           mkdir -p /tmp/e2e-ocp
           cd /tmp/e2e-ocp
           
-          cat > config.yaml << 'EOF'
-project:
-  name: e2e-openshift
-  description: "E2E Test - OpenShift"
-platform: openshift
-scope: both
-gitops_tool: argocd
-git:
-  url: https://github.com/test/repo.git
-environments:
-  - name: dev
-  - name: prod
-infrastructure:
-  namespaces: true
-  rbac: true
-docs:
-  readme: true
-EOF
+          cat > config.yaml << 'EOFCONFIG'
+          project:
+            name: e2e-openshift
+            description: "E2E Test - OpenShift"
+          platform: openshift
+          scope: both
+          gitops_tool: argocd
+          git:
+            url: https://github.com/test/repo.git
+          environments:
+            - name: dev
+            - name: prod
+          infrastructure:
+            namespaces: true
+            rbac: true
+          docs:
+            readme: true
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' config.yaml
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml
           
@@ -347,17 +353,20 @@ EOF
           cd /tmp/e2e-presets
           
           for preset in minimal standard enterprise; do
-            cat > ${preset}.yaml << EOF
-project:
-  name: e2e-${preset}
-platform: kubernetes
-gitops_tool: argocd
-git:
-  url: https://github.com/test/repo.git
-preset: ${preset}
-environments:
-  - name: dev
-EOF
+            cat > ${preset}.yaml << EOFCONFIG
+            project:
+              name: e2e-${preset}
+            platform: kubernetes
+            gitops_tool: argocd
+            git:
+              url: https://github.com/test/repo.git
+            preset: ${preset}
+            environments:
+              - name: dev
+            EOFCONFIG
+            
+            # Strip leading spaces from the config file
+            sed -i 's/^            //' ${preset}.yaml
             
             $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config ${preset}.yaml
             test -d e2e-${preset}
@@ -370,16 +379,19 @@ EOF
           mkdir -p /tmp/e2e-dryrun
           cd /tmp/e2e-dryrun
           
-          cat > config.yaml << 'EOF'
-project:
-  name: should-not-exist
-platform: kubernetes
-gitops_tool: argocd
-git:
-  url: https://github.com/test/repo.git
-environments:
-  - name: dev
-EOF
+          cat > config.yaml << 'EOFCONFIG'
+          project:
+            name: should-not-exist
+          platform: kubernetes
+          gitops_tool: argocd
+          git:
+            url: https://github.com/test/repo.git
+          environments:
+            - name: dev
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' config.yaml
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml --dry-run
           
@@ -499,40 +511,43 @@ EOF
           
           CLUSTER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
           
-          cat > gitopsi.yaml << EOF
-project:
-  name: ci-test
-  description: "CI E2E Test"
-platform: kubernetes
-scope: infrastructure
-gitops_tool: argocd
-git:
-  url: https://github.com/test/placeholder.git
-  branch: main
-cluster:
-  url: ${CLUSTER_URL}
-  name: kind-gitopsi-ci-test
-  platform: kubernetes
-environments:
-  - name: dev
-bootstrap:
-  enabled: true
-  tool: argocd
-  mode: helm
-  namespace: argocd
-  wait: true
-  timeout: 300
-operators:
-  enabled: true
-  operators:
-    - name: test-operator
-      namespace: test-ns
-      channel: stable
-      source: community-operators
-      source_namespace: openshift-marketplace
-      enabled: true
-      install_mode: AllNamespaces
-EOF
+          cat > gitopsi.yaml << EOFCONFIG
+          project:
+            name: ci-test
+            description: "CI E2E Test"
+          platform: kubernetes
+          scope: infrastructure
+          gitops_tool: argocd
+          git:
+            url: https://github.com/test/placeholder.git
+            branch: main
+          cluster:
+            url: ${CLUSTER_URL}
+            name: kind-gitopsi-ci-test
+            platform: kubernetes
+          environments:
+            - name: dev
+          bootstrap:
+            enabled: true
+            tool: argocd
+            mode: helm
+            namespace: argocd
+            wait: true
+            timeout: 300
+          operators:
+            enabled: true
+            operators:
+              - name: test-operator
+                namespace: test-ns
+                channel: stable
+                source: community-operators
+                source_namespace: openshift-marketplace
+                enabled: true
+                install_mode: AllNamespaces
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' gitopsi.yaml
           
           echo "📦 Generating manifests..."
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml
@@ -563,35 +578,38 @@ EOF
           CLUSTER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
           REPO_URL="${{ steps.create_repo.outputs.REPO_URL }}"
           
-          cat > gitopsi.yaml << EOF
-project:
-  name: ci-test
-  description: "CI Full E2E Test"
-platform: kubernetes
-scope: infrastructure
-gitops_tool: argocd
-git:
-  url: ${REPO_URL}
-  branch: main
-  push_on_init: true
-  auth:
-    method: token
-cluster:
-  url: ${CLUSTER_URL}
-  name: kind-gitopsi-ci-test
-  platform: kubernetes
-  auth:
-    method: kubeconfig
-environments:
-  - name: dev
-bootstrap:
-  enabled: true
-  tool: argocd
-  mode: helm
-  namespace: argocd
-  wait: true
-  timeout: 300
-EOF
+          cat > gitopsi.yaml << EOFCONFIG
+          project:
+            name: ci-test
+            description: "CI Full E2E Test"
+          platform: kubernetes
+          scope: infrastructure
+          gitops_tool: argocd
+          git:
+            url: ${REPO_URL}
+            branch: main
+            push_on_init: true
+            auth:
+              method: token
+          cluster:
+            url: ${CLUSTER_URL}
+            name: kind-gitopsi-ci-test
+            platform: kubernetes
+            auth:
+              method: kubeconfig
+          environments:
+            - name: dev
+          bootstrap:
+            enabled: true
+            tool: argocd
+            mode: helm
+            namespace: argocd
+            wait: true
+            timeout: 300
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' gitopsi.yaml
           
           echo "🚀 Running gitopsi init --bootstrap..."
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml --bootstrap
@@ -619,16 +637,19 @@ EOF
           cd /tmp/operator-test
           
           # Initialize a project first
-          cat > gitopsi.yaml << 'EOF'
-project:
-  name: operator-test
-platform: kubernetes
-gitops_tool: argocd
-git:
-  url: https://github.com/test/repo.git
-environments:
-  - name: dev
-EOF
+          cat > gitopsi.yaml << 'EOFCONFIG'
+          project:
+            name: operator-test
+          platform: kubernetes
+          gitops_tool: argocd
+          git:
+            url: https://github.com/test/repo.git
+          environments:
+            - name: dev
+          EOFCONFIG
+          
+          # Strip leading spaces from the config file
+          sed -i 's/^          //' gitopsi.yaml
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml
           

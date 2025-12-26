@@ -254,33 +254,33 @@ jobs:
           cd /tmp/e2e-k8s
           
           cat > config.yaml << 'EOF'
-          project:
-            name: e2e-kubernetes
-            description: "E2E Test - Kubernetes"
-          platform: kubernetes
-          scope: both
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/repo.git
-          environments:
-            - name: dev
-            - name: staging
-            - name: prod
-          infrastructure:
-            namespaces: true
-            rbac: true
-            network_policies: true
-            resource_quotas: true
-          applications:
-            - name: api
-              image: nginx:latest
-              port: 80
-              replicas: 2
-          docs:
-            readme: true
-            architecture: true
-            onboarding: true
-          EOF
+project:
+  name: e2e-kubernetes
+  description: "E2E Test - Kubernetes"
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+git:
+  url: https://github.com/test/repo.git
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+infrastructure:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+applications:
+  - name: api
+    image: nginx:latest
+    port: 80
+    replicas: 2
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+EOF
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml
           
@@ -299,23 +299,23 @@ jobs:
           cd /tmp/e2e-ocp
           
           cat > config.yaml << 'EOF'
-          project:
-            name: e2e-openshift
-            description: "E2E Test - OpenShift"
-          platform: openshift
-          scope: both
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/repo.git
-          environments:
-            - name: dev
-            - name: prod
-          infrastructure:
-            namespaces: true
-            rbac: true
-          docs:
-            readme: true
-          EOF
+project:
+  name: e2e-openshift
+  description: "E2E Test - OpenShift"
+platform: openshift
+scope: both
+gitops_tool: argocd
+git:
+  url: https://github.com/test/repo.git
+environments:
+  - name: dev
+  - name: prod
+infrastructure:
+  namespaces: true
+  rbac: true
+docs:
+  readme: true
+EOF
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml
           
@@ -348,16 +348,16 @@ jobs:
           
           for preset in minimal standard enterprise; do
             cat > ${preset}.yaml << EOF
-          project:
-            name: e2e-${preset}
-          platform: kubernetes
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/repo.git
-          preset: ${preset}
-          environments:
-            - name: dev
-          EOF
+project:
+  name: e2e-${preset}
+platform: kubernetes
+gitops_tool: argocd
+git:
+  url: https://github.com/test/repo.git
+preset: ${preset}
+environments:
+  - name: dev
+EOF
             
             $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config ${preset}.yaml
             test -d e2e-${preset}
@@ -371,15 +371,15 @@ jobs:
           cd /tmp/e2e-dryrun
           
           cat > config.yaml << 'EOF'
-          project:
-            name: should-not-exist
-          platform: kubernetes
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/repo.git
-          environments:
-            - name: dev
-          EOF
+project:
+  name: should-not-exist
+platform: kubernetes
+gitops_tool: argocd
+git:
+  url: https://github.com/test/repo.git
+environments:
+  - name: dev
+EOF
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml --dry-run
           
@@ -500,39 +500,39 @@ jobs:
           CLUSTER_URL=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
           
           cat > gitopsi.yaml << EOF
-          project:
-            name: ci-test
-            description: "CI E2E Test"
-          platform: kubernetes
-          scope: infrastructure
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/placeholder.git
-            branch: main
-          cluster:
-            url: ${CLUSTER_URL}
-            name: kind-gitopsi-ci-test
-            platform: kubernetes
-          environments:
-            - name: dev
-          bootstrap:
-            enabled: true
-            tool: argocd
-            mode: helm
-            namespace: argocd
-            wait: true
-            timeout: 300
-          operators:
-            enabled: true
-            operators:
-              - name: test-operator
-                namespace: test-ns
-                channel: stable
-                source: community-operators
-                source_namespace: openshift-marketplace
-                enabled: true
-                install_mode: AllNamespaces
-          EOF
+project:
+  name: ci-test
+  description: "CI E2E Test"
+platform: kubernetes
+scope: infrastructure
+gitops_tool: argocd
+git:
+  url: https://github.com/test/placeholder.git
+  branch: main
+cluster:
+  url: ${CLUSTER_URL}
+  name: kind-gitopsi-ci-test
+  platform: kubernetes
+environments:
+  - name: dev
+bootstrap:
+  enabled: true
+  tool: argocd
+  mode: helm
+  namespace: argocd
+  wait: true
+  timeout: 300
+operators:
+  enabled: true
+  operators:
+    - name: test-operator
+      namespace: test-ns
+      channel: stable
+      source: community-operators
+      source_namespace: openshift-marketplace
+      enabled: true
+      install_mode: AllNamespaces
+EOF
           
           echo "📦 Generating manifests..."
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml
@@ -564,34 +564,34 @@ jobs:
           REPO_URL="${{ steps.create_repo.outputs.REPO_URL }}"
           
           cat > gitopsi.yaml << EOF
-          project:
-            name: ci-test
-            description: "CI Full E2E Test"
-          platform: kubernetes
-          scope: infrastructure
-          gitops_tool: argocd
-          git:
-            url: ${REPO_URL}
-            branch: main
-            push_on_init: true
-            auth:
-              method: token
-          cluster:
-            url: ${CLUSTER_URL}
-            name: kind-gitopsi-ci-test
-            platform: kubernetes
-            auth:
-              method: kubeconfig
-          environments:
-            - name: dev
-          bootstrap:
-            enabled: true
-            tool: argocd
-            mode: helm
-            namespace: argocd
-            wait: true
-            timeout: 300
-          EOF
+project:
+  name: ci-test
+  description: "CI Full E2E Test"
+platform: kubernetes
+scope: infrastructure
+gitops_tool: argocd
+git:
+  url: ${REPO_URL}
+  branch: main
+  push_on_init: true
+  auth:
+    method: token
+cluster:
+  url: ${CLUSTER_URL}
+  name: kind-gitopsi-ci-test
+  platform: kubernetes
+  auth:
+    method: kubeconfig
+environments:
+  - name: dev
+bootstrap:
+  enabled: true
+  tool: argocd
+  mode: helm
+  namespace: argocd
+  wait: true
+  timeout: 300
+EOF
           
           echo "🚀 Running gitopsi init --bootstrap..."
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml --bootstrap
@@ -620,15 +620,15 @@ jobs:
           
           # Initialize a project first
           cat > gitopsi.yaml << 'EOF'
-          project:
-            name: operator-test
-          platform: kubernetes
-          gitops_tool: argocd
-          git:
-            url: https://github.com/test/repo.git
-          environments:
-            - name: dev
-          EOF
+project:
+  name: operator-test
+platform: kubernetes
+gitops_tool: argocd
+git:
+  url: https://github.com/test/repo.git
+environments:
+  - name: dev
+EOF
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config gitopsi.yaml
           

@@ -319,6 +319,10 @@ jobs:
           
           $GITHUB_WORKSPACE/bin/gitopsi-linux-amd64 init --config config.yaml
           
+          # Debug: Show generated file content
+          echo "📄 Generated file content:"
+          cat e2e-openshift/argocd/projects/infrastructure.yaml || echo "File not found"
+          
           # Verify OpenShift uses openshift-gitops namespace
           grep -q "namespace: openshift-gitops" e2e-openshift/argocd/projects/infrastructure.yaml
           

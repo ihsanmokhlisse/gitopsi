@@ -28,6 +28,9 @@ platform: kubernetes
 scope: both
 gitops_tool: argocd
 
+git:
+  url: https://github.com/test/integration-test.git
+
 environments:
   - name: dev
   - name: staging
@@ -174,6 +177,7 @@ func TestIntegration_InitFlow_WithPresets(t *testing.T) {
 			cfg.Project.Name = "preset-" + string(preset)
 			cfg.Platform = "kubernetes"
 			cfg.GitOpsTool = "argocd"
+			cfg.Git.URL = "https://github.com/test/preset-test.git"
 			cfg.Environments = []config.Environment{{Name: "dev"}}
 			cfg.Preset = preset
 			cfg.ApplyPreset()
@@ -199,6 +203,7 @@ func TestIntegration_ValidateFlow_GeneratedManifests(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "both",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/validate-test.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -244,6 +249,7 @@ func TestIntegration_ValidateFlow_WithSecurityChecks(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "application",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/security-test.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -586,6 +592,7 @@ func TestIntegration_OutputFormats(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/output-test.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -630,6 +637,7 @@ func TestIntegration_KustomizationStructure(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/kustomize-struct.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "staging"},
@@ -690,6 +698,7 @@ func TestIntegration_ApplicationGeneration(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "application",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/multi-app.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},

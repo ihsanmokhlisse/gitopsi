@@ -251,6 +251,53 @@ make coverage-check
 
 ## Code Style
 
+### 12-Factor App Compliance (MANDATORY)
+
+gitopsi follows [12-Factor App](https://12factor.net/) methodology. **Factor III (Config)** is critical:
+
+#### ❌ NEVER Hardcode Values
+
+```go
+// BAD - Hardcoded URL
+repoURL := "https://github.com/org/repo.git"
+
+// BAD - Hardcoded fallback
+if repoURL == "" {
+    repoURL = "https://github.com/org/" + projectName + ".git"
+}
+```
+
+#### ✅ ALWAYS Use Configuration
+
+```go
+// GOOD - From config (user-provided)
+repoURL := cfg.Git.URL
+
+// GOOD - Fail if required config is missing
+if repoURL == "" {
+    return fmt.Errorf("git.url is required - ArgoCD needs a Git repository to sync from")
+}
+```
+
+#### Configuration Sources (Priority Order)
+
+1. **CLI Flags**: `--git-url`, `--cluster`, etc.
+2. **Environment Variables**: `GITOPSI_GIT_URL`, `GITOPSI_CLUSTER_URL`, etc.
+3. **Config File**: `gitops.yaml`
+4. **Auto-Detection**: kubeconfig, git remote (only for cluster info, never for Git URL)
+
+#### Rules for Templates
+
+```yaml
+# BAD - Hardcoded in template
+repoURL: https://github.com/org/{{ .ProjectName }}.git
+
+# GOOD - Variable from config
+repoURL: {{ .RepoURL }}
+```
+
+The `.RepoURL` value MUST come from user configuration, never constructed internally.
+
 ### Formatting
 
 - Use `gofmt` (automatic via pre-commit)
@@ -266,6 +313,12 @@ make coverage-check
 ### Error Handling
 
 ```go
+// Return clear error when required config is missing
+if cfg.Git.URL == "" {
+    return fmt.Errorf("git.url is required: gitopsi generates GitOps manifests that sync from Git")
+}
+
+// Wrap errors with context
 if err != nil {
     return fmt.Errorf("failed to do something: %w", err)
 }

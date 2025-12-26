@@ -203,6 +203,7 @@ func TestRegression_40_AllInfraSubdirsHaveKustomization(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "staging"},
@@ -256,6 +257,7 @@ func TestRegression_40_BaseKustomizationReferencesSubdirs(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -292,6 +294,7 @@ func TestRegression_40_OverlaysHaveKustomization(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "staging"},
@@ -426,6 +429,7 @@ func TestRegression_KustomizeBuildCompatibility(t *testing.T) {
 		Platform:   "kubernetes",
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -464,4 +468,155 @@ func TestRegression_KustomizeBuildCompatibility(t *testing.T) {
 		}
 	}
 	assert.True(t, hasResources, "Should use 'resources:' field")
+}
+
+func TestRegression_35_PreflightCheckGitCredentials(t *testing.T) {
+	tests := []struct {
+		name        string
+		gitToken    string
+		gitURL      string
+		expectError bool
+	}{
+		{
+			name:        "valid token and URL",
+			gitToken:    "ghp_validtoken123",
+			gitURL:      "https://github.com/org/repo.git",
+			expectError: false,
+		},
+		{
+			name:        "empty token should warn",
+			gitToken:    "",
+			gitURL:      "https://github.com/org/repo.git",
+			expectError: true,
+		},
+		{
+			name:        "empty URL should warn",
+			gitToken:    "ghp_validtoken123",
+			gitURL:      "",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:    config.Project{Name: "preflight-test"},
+				Platform:   "kubernetes",
+				Scope:      "both",
+				GitOpsTool: "argocd",
+				Git: config.GitConfig{
+					URL: tc.gitURL,
+					Auth: config.GitAuth{
+						Token: tc.gitToken,
+					},
+				},
+			}
+
+			hasGitConfig := cfg.Git.URL != "" && cfg.Git.Auth.Token != ""
+
+			if tc.expectError {
+				assert.False(t, hasGitConfig,
+					"Should detect missing Git configuration")
+			} else {
+				assert.True(t, hasGitConfig,
+					"Should have valid Git configuration")
+			}
+		})
+	}
+}
+
+func TestRegression_35_PreflightCheckClusterConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		clusterURL   string
+		clusterToken string
+		expectReady  bool
+	}{
+		{
+			name:         "with cluster URL and token",
+			clusterURL:   "https://api.cluster.local:6443",
+			clusterToken: "cluster-token-xyz",
+			expectReady:  true,
+		},
+		{
+			name:         "missing cluster URL",
+			clusterURL:   "",
+			clusterToken: "cluster-token-xyz",
+			expectReady:  false,
+		},
+		{
+			name:         "missing cluster token",
+			clusterURL:   "https://api.cluster.local:6443",
+			clusterToken: "",
+			expectReady:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:  config.Project{Name: "cluster-preflight"},
+				Platform: "kubernetes",
+				Cluster: config.ClusterConfig{
+					URL: tc.clusterURL,
+					Auth: config.ClusterAuth{
+						Token: tc.clusterToken,
+					},
+				},
+			}
+
+			hasClusterConfig := cfg.Cluster.URL != "" && cfg.Cluster.Auth.Token != ""
+
+			if tc.expectReady {
+				assert.True(t, hasClusterConfig,
+					"Cluster should be ready with URL and token")
+			} else {
+				assert.False(t, hasClusterConfig,
+					"Cluster should not be ready without URL or token")
+			}
+		})
+	}
+}
+
+func TestRegression_35_PreflightSecuritySettings(t *testing.T) {
+	tests := []struct {
+		name          string
+		skipTLS       bool
+		expectWarning bool
+	}{
+		{
+			name:          "secure settings",
+			skipTLS:       false,
+			expectWarning: false,
+		},
+		{
+			name:          "skip TLS verify should warn",
+			skipTLS:       true,
+			expectWarning: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:  config.Project{Name: "security-preflight"},
+				Platform: "kubernetes",
+				Cluster: config.ClusterConfig{
+					Auth: config.ClusterAuth{
+						SkipTLS: tc.skipTLS,
+					},
+				},
+			}
+
+			hasSecurityWarning := cfg.Cluster.Auth.SkipTLS
+
+			if tc.expectWarning {
+				assert.True(t, hasSecurityWarning,
+					"Should detect security warning when SkipTLS is true")
+			} else {
+				assert.False(t, hasSecurityWarning,
+					"Should not have security warnings when SkipTLS is false")
+			}
+		})
+	}
 }

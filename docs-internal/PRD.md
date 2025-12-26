@@ -23,6 +23,43 @@ gitopsi init --git-url git@github.com:org/repo.git --cluster https://api.ocp.com
 3. **🔄 Two Modes, Same Output** - Interactive (human) and Config (automation)
 4. **🏗️ Opinionated but Flexible** - Smart defaults with escape hatches
 5. **📖 Self-Documenting** - Generated repos are understandable and maintainable
+6. **🔧 12-Factor Compliant** - All configuration externalized, no hardcoded values
+
+### 12-Factor App Compliance
+
+gitopsi follows the [12-Factor App](https://12factor.net/) methodology:
+
+| Factor | Implementation |
+|--------|----------------|
+| **I. Codebase** | One codebase in Git, multiple deploys |
+| **II. Dependencies** | Go modules, explicit dependency declaration |
+| **III. Config** | **All config from env vars, files, or flags - ZERO hardcoded values** |
+| **IV. Backing Services** | Git providers, clusters as attached resources |
+| **V. Build/Release/Run** | Separate build (binary), release (config), run stages |
+| **VI. Processes** | Stateless CLI execution |
+| **VII. Port Binding** | N/A (CLI tool) |
+| **VIII. Concurrency** | Parallel file generation where possible |
+| **IX. Disposability** | Fast startup, graceful shutdown |
+| **X. Dev/Prod Parity** | Same config structure for all environments |
+| **XI. Logs** | Stream to stdout/stderr |
+| **XII. Admin Processes** | One-off commands (validate, migrate, etc.) |
+
+#### Configuration Hierarchy (Factor III)
+
+All values are configurable through three layers (highest to lowest priority):
+
+```
+1. CLI Flags         (--git-url, --cluster, etc.)
+2. Environment Vars  (GITOPSI_GIT_URL, GITOPSI_CLUSTER_URL, etc.)
+3. Config File       (gitops.yaml)
+4. Auto-Detection    (kubeconfig, git remote, etc.)
+```
+
+**RULE: NO HARDCODED VALUES**
+- ❌ Never: `repoURL: "https://github.com/org/repo.git"`
+- ✅ Always: `repoURL: {{ .Config.Git.URL }}`
+
+All placeholders MUST be populated from user-provided configuration.
 
 ### User Experience Goals
 

@@ -80,9 +80,12 @@ func (g *Generator) generateArgoCDProjects(argoCDNamespace string) error {
 }
 
 func (g *Generator) generateSingleClusterArgoCD(argoCDNamespace string) error {
-	repoURL := g.Config.Output.URL
+	repoURL := g.Config.Git.URL
 	if repoURL == "" {
-		repoURL = "https://github.com/org/" + g.Config.Project.Name + ".git"
+		repoURL = g.Config.Output.URL
+	}
+	if repoURL == "" {
+		return fmt.Errorf("git.url is required to generate ArgoCD applications - ArgoCD needs to sync from a Git repository")
 	}
 
 	for _, env := range g.Config.Environments {
@@ -135,9 +138,12 @@ func (g *Generator) generateSingleClusterArgoCD(argoCDNamespace string) error {
 }
 
 func (g *Generator) generateMultiClusterArgoCD(argoCDNamespace string) error {
-	repoURL := g.Config.Output.URL
+	repoURL := g.Config.Git.URL
 	if repoURL == "" {
-		repoURL = "https://github.com/org/" + g.Config.Project.Name + ".git"
+		repoURL = g.Config.Output.URL
+	}
+	if repoURL == "" {
+		return fmt.Errorf("git.url is required to generate ArgoCD applications - ArgoCD needs to sync from a Git repository")
 	}
 
 	branch := g.Config.Output.Branch

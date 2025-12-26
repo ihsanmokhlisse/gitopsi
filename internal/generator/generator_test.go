@@ -10,6 +10,8 @@ import (
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
 )
 
+const testGitURL = "https://github.com/test/repo.git"
+
 func TestNew(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Project.Name = "test"
@@ -39,6 +41,7 @@ func TestGenerateDryRun(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "prod"},
@@ -567,6 +570,7 @@ func TestGenerateFullWorkflow(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "staging"},
@@ -634,6 +638,7 @@ func TestGenerateInfrastructureOnly(t *testing.T) {
 		Scope:      "infrastructure",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -663,6 +668,7 @@ func TestGenerateApplicationsOnly(t *testing.T) {
 		Scope:      "application",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -695,6 +701,7 @@ func TestGenerateWithoutDocs(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -719,6 +726,7 @@ func TestGenerateVerbose(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -743,6 +751,7 @@ func TestGenerateEmptyApps(t *testing.T) {
 		Scope:      "application",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -773,6 +782,7 @@ func TestGenerateMultipleApps(t *testing.T) {
 		Scope:      "application",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "staging"},
@@ -816,6 +826,7 @@ func TestGenerateMultipleEnvironments(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev", Cluster: "https://dev.k8s.local"},
 			{Name: "qa", Cluster: "https://qa.k8s.local"},
@@ -1021,6 +1032,7 @@ func TestGenerateAllPlatforms(t *testing.T) {
 				Scope:      "both",
 				GitOpsTool: "argocd",
 				Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 				Environments: []config.Environment{
 					{Name: "dev"},
 				},
@@ -1051,6 +1063,7 @@ func TestGenerateAllScopes(t *testing.T) {
 				Scope:      scope,
 				GitOpsTool: "argocd",
 				Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 				Environments: []config.Environment{
 					{Name: "dev"},
 				},
@@ -1080,6 +1093,7 @@ func TestGenerateFluxTool(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "flux",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -1109,6 +1123,7 @@ func TestGenerateBothTools(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "both",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -1136,6 +1151,7 @@ func TestGenerateWithAllDocs(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -1169,6 +1185,7 @@ func TestGenerateWithVerboseOutput(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 		},
@@ -1196,6 +1213,7 @@ func TestGenerateStructureCreatesAllDirs(t *testing.T) {
 		Scope:      "both",
 		GitOpsTool: "argocd",
 		Output:     config.Output{Type: "local"},
+		Git:        config.GitConfig{URL: testGitURL},
 		Environments: []config.Environment{
 			{Name: "dev"},
 			{Name: "prod"},

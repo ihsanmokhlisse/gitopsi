@@ -136,6 +136,10 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("failed to generate scripts: %w", err)
 	}
 
+	if err := g.generateOperators(); err != nil {
+		return fmt.Errorf("failed to generate operators: %w", err)
+	}
+
 	fmt.Printf("\n✅ Generated: %s/\n", g.Config.Project.Name)
 	return nil
 }

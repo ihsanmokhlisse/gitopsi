@@ -1,5 +1,9 @@
 package config
 
+import (
+	"github.com/ihsanmokhlisse/gitopsi/internal/operator"
+)
+
 // Preset defines a configuration preset type
 type Preset string
 
@@ -29,6 +33,7 @@ type Config struct {
 	Apps         []Application       `yaml:"applications"`
 	Docs         Documentation       `yaml:"docs"`
 	Version      VersionConfig       `yaml:"version,omitempty"`
+	Operators    operator.Config     `yaml:"operators,omitempty"`
 }
 
 // VersionConfig defines target Kubernetes/OpenShift version for manifest compatibility.
@@ -309,6 +314,7 @@ func NewDefaultConfig() *Config {
 			Architecture: true,
 			Onboarding:   true,
 		},
+		Operators: operator.NewDefaultConfig(),
 	}
 }
 

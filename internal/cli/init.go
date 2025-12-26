@@ -362,6 +362,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			branch = "main"
 		}
 		if pushErr := gitProvider.Push(ctx, git.PushOptions{
+			Path:        projectPath,
 			Remote:      "origin",
 			Branch:      branch,
 			SetUpstream: true,
@@ -504,11 +505,17 @@ func applyFlagOverrides(cfg *config.Config) {
 		cfg.ApplyPreset()
 	}
 
-	if gitURL != "" {
-		cfg.Git.URL = gitURL
-		cfg.Output.URL = gitURL
+	// Git URL: CLI flag > env var > config file
+	url := gitURL
+	if url == "" {
+		url = os.Getenv("GITOPSI_GIT_URL")
+	}
+	if url != "" {
+		cfg.Git.URL = url
+		cfg.Output.URL = url
 	}
 
+	// Git Token: CLI flag > env var > config file
 	token := gitToken
 	if token == "" {
 		token = os.Getenv("GITOPSI_GIT_TOKEN")
@@ -518,14 +525,25 @@ func applyFlagOverrides(cfg *config.Config) {
 		cfg.Git.Auth.Method = "token"
 	}
 
+	// Git Branch: env var > config file
+	if branch := os.Getenv("GITOPSI_GIT_BRANCH"); branch != "" {
+		cfg.Git.Branch = branch
+	}
+
 	if pushAfterInit {
 		cfg.Git.PushOnInit = true
 	}
 
-	if clusterURL != "" {
-		cfg.Cluster.URL = clusterURL
+	// Cluster URL: CLI flag > env var > config file
+	cURL := clusterURL
+	if cURL == "" {
+		cURL = os.Getenv("GITOPSI_CLUSTER_URL")
+	}
+	if cURL != "" {
+		cfg.Cluster.URL = cURL
 	}
 
+	// Cluster Token: CLI flag > env var > config file
 	cToken := clusterToken
 	if cToken == "" {
 		cToken = os.Getenv("GITOPSI_CLUSTER_TOKEN")
@@ -533,6 +551,12 @@ func applyFlagOverrides(cfg *config.Config) {
 	if cToken != "" {
 		cfg.Cluster.Auth.Token = cToken
 		cfg.Cluster.Auth.Method = "token"
+	}
+
+	// Cluster Platform: env var > config file
+	if platform := os.Getenv("GITOPSI_CLUSTER_PLATFORM"); platform != "" {
+		cfg.Platform = platform
+		cfg.Cluster.Platform = platform
 	}
 
 	if bootstrapFlag {
@@ -549,7 +573,7 @@ func shouldPush(cfg *config.Config) bool {
 }
 
 func shouldBootstrap(cfg *config.Config) bool {
-	return cfg.Bootstrap.Enabled
+	return cfg.Bootstrap.Enabled && cfg.Cluster.URL != ""
 }
 
 func autoDetectCluster(ctx context.Context, cfg *config.Config) error {

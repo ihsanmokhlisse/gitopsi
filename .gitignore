@@ -39,6 +39,9 @@ tmp/
 
 # Internal documentation (not for public repo)
 docs-internal/
+!docs-internal/PRD.md
+!docs-internal/CURSOR_RULES.md
+conductor/
 
 # AI assistant files
 CLAUDE.md

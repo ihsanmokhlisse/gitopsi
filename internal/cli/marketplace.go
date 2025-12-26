@@ -651,13 +651,13 @@ var patternCreateCmd = &cobra.Command{
 }
 
 var (
-	installVersion      string
-	installConfig       string
-	installEnvs         []string
-	installDryRun       bool
-	installForce        bool
-	installSkipDeps     bool
-	patternCategory     string
+	installVersion  string
+	installConfig   string
+	installEnvs     []string
+	installDryRun   bool
+	installForce    bool
+	installSkipDeps bool
+	patternCategory string
 )
 
 func init() {
@@ -978,4 +978,3 @@ func runPatternValidate(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-

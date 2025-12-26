@@ -177,4 +177,3 @@ func formatResourceList(resources []string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-

@@ -156,4 +156,3 @@ func TestGenerator_GenerateOperators_CreatesKustomization(t *testing.T) {
 	_, err = os.Stat(kustomizationPath)
 	assert.False(t, os.IsNotExist(err), "Kustomization YAML should exist at %s", kustomizationPath)
 }
-

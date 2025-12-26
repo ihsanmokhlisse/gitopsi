@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -260,6 +261,10 @@ func TestFileStore_Delete(t *testing.T) {
 }
 
 func TestFileStore_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows - file permissions not supported")
+	}
+
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "credentials.yaml")
 	ctx := context.Background()
@@ -316,6 +321,9 @@ func TestGetDefaultStorePath(t *testing.T) {
 
 func TestFileStore_InvalidPath(t *testing.T) {
 	// Test with path in non-writable location (Unix only)
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows - Unix path test")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("Skipping as root user")
 	}

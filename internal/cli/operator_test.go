@@ -53,4 +53,3 @@ func TestOperatorPresets_ListsAllPresets(t *testing.T) {
 	assert.Contains(t, presets, "prometheus", "Should include prometheus preset")
 	assert.Contains(t, presets, "grafana", "Should include grafana preset")
 }
-

@@ -579,7 +579,3 @@ func (rm *RegistryManager) ToJSON() (string, error) {
 	}
 	return string(data), nil
 }
-
-
-
-

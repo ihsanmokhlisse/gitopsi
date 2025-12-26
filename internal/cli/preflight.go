@@ -502,7 +502,3 @@ func printSummary(results []PreflightResult) {
 		pterm.Success.Println("Pre-flight check PASSED - cluster ready for GitOps deployment")
 	}
 }
-
-
-
-

@@ -1032,7 +1032,7 @@ func TestGenerateAllPlatforms(t *testing.T) {
 				Scope:      "both",
 				GitOpsTool: "argocd",
 				Output:     config.Output{Type: "local"},
-		Git:        config.GitConfig{URL: testGitURL},
+				Git:        config.GitConfig{URL: testGitURL},
 				Environments: []config.Environment{
 					{Name: "dev"},
 				},
@@ -1063,7 +1063,7 @@ func TestGenerateAllScopes(t *testing.T) {
 				Scope:      scope,
 				GitOpsTool: "argocd",
 				Output:     config.Output{Type: "local"},
-		Git:        config.GitConfig{URL: testGitURL},
+				Git:        config.GitConfig{URL: testGitURL},
 				Environments: []config.Environment{
 					{Name: "dev"},
 				},

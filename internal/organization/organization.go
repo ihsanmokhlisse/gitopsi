@@ -595,7 +595,3 @@ func (m *Manager) Validate() error {
 
 	return nil
 }
-
-
-
-

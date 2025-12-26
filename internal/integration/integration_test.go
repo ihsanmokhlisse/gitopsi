@@ -732,10 +732,10 @@ func TestIntegration_ApplicationGeneration(t *testing.T) {
 
 func TestIntegration_ScopeSelection(t *testing.T) {
 	scopes := []struct {
-		name          string
-		scope         string
-		hasInfra      bool
-		hasApps       bool
+		name     string
+		scope    string
+		hasInfra bool
+		hasApps  bool
 	}{
 		{"infrastructure only", "infrastructure", true, false},
 		{"application only", "application", false, true},

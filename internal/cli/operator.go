@@ -66,12 +66,12 @@ var operatorPresetsCmd = &cobra.Command{
 }
 
 var (
-	opNamespace         string
-	opChannel           string
-	opSource            string
-	opSourceNamespace   string
-	opInstallMode       string
-	opInstallApproval   string
+	opNamespace       string
+	opChannel         string
+	opSource          string
+	opSourceNamespace string
+	opInstallMode     string
+	opInstallApproval string
 )
 
 func init() {
@@ -119,9 +119,9 @@ func getOperatorManager() (*operator.Manager, error) {
 
 func saveOperatorConfig(mgr *operator.Manager) error {
 	configPath := filepath.Join(operatorProjectPath, "gitopsi.yaml")
-	
+
 	var fullConfig map[string]interface{}
-	
+
 	if data, err := os.ReadFile(configPath); err == nil {
 		if err := yaml.Unmarshal(data, &fullConfig); err != nil {
 			fullConfig = make(map[string]interface{})
@@ -277,4 +277,3 @@ func runOperatorPresets(cmd *cobra.Command, args []string) error {
 	pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 	return nil
 }
-

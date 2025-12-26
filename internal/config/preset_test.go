@@ -227,7 +227,3 @@ func TestCustomDirs(t *testing.T) {
 	assert.Equal(t, "monitoring/dashboards", cfg.Structure.CustomDirs[0].Path)
 	assert.Equal(t, "Grafana dashboards", cfg.Structure.CustomDirs[0].Description)
 }
-
-
-
-

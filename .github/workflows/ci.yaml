@@ -536,6 +536,7 @@ jobs:
             timeout: 300
           operators:
             enabled: true
+            create_operator_group: true
             operators:
               - name: test-operator
                 namespace: test-ns

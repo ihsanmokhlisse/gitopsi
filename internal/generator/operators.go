@@ -20,7 +20,7 @@ func (g *Generator) generateOperators() error {
 
 	fmt.Println("🔧 Generating operator manifests...")
 
-	operatorsDir := filepath.Join(g.Config.Project.Name, "infrastructure", "operators")
+	operatorsDir := filepath.Join(g.Config.Project.Name, "infrastructure", "base", "operators")
 	if err := g.Writer.CreateDir(operatorsDir); err != nil {
 		return fmt.Errorf("failed to create operators directory: %w", err)
 	}

@@ -47,7 +47,7 @@ func TestGenerator_GenerateOperators_CreatesSubscription(t *testing.T) {
 	err := gen.generateOperators()
 	require.NoError(t, err, "generateOperators should not error")
 
-	subscriptionPath := filepath.Join(tmpDir, "operator-test/infrastructure/operators/prometheus-operator/subscription.yaml")
+	subscriptionPath := filepath.Join(tmpDir, "operator-test/infrastructure/base/operators/prometheus-operator/subscription.yaml")
 	_, err = os.Stat(subscriptionPath)
 	assert.False(t, os.IsNotExist(err), "Subscription YAML should exist at %s", subscriptionPath)
 }
@@ -86,7 +86,7 @@ func TestGenerator_GenerateOperators_CreatesOperatorGroup(t *testing.T) {
 	err := gen.generateOperators()
 	require.NoError(t, err, "generateOperators should not error")
 
-	operatorGroupPath := filepath.Join(tmpDir, "operator-test/infrastructure/operators/grafana-operator/operatorgroup.yaml")
+	operatorGroupPath := filepath.Join(tmpDir, "operator-test/infrastructure/base/operators/grafana-operator/operatorgroup.yaml")
 	_, err = os.Stat(operatorGroupPath)
 	assert.False(t, os.IsNotExist(err), "OperatorGroup YAML should exist at %s", operatorGroupPath)
 }
@@ -114,7 +114,7 @@ func TestGenerator_GenerateOperators_SkipsWhenDisabled(t *testing.T) {
 	err := gen.generateOperators()
 	require.NoError(t, err, "generateOperators should not error when disabled")
 
-	operatorsDir := filepath.Join(tmpDir, "operator-test/infrastructure/operators")
+	operatorsDir := filepath.Join(tmpDir, "operator-test/infrastructure/base/operators")
 	_, err = os.Stat(operatorsDir)
 	assert.True(t, os.IsNotExist(err), "Operators directory should not exist when disabled")
 }
@@ -153,7 +153,7 @@ func TestGenerator_GenerateOperators_CreatesKustomization(t *testing.T) {
 	err := gen.generateOperators()
 	require.NoError(t, err, "generateOperators should not error")
 
-	kustomizationPath := filepath.Join(tmpDir, "operator-test/infrastructure/operators/kustomization.yaml")
+	kustomizationPath := filepath.Join(tmpDir, "operator-test/infrastructure/base/operators/kustomization.yaml")
 	_, err = os.Stat(kustomizationPath)
 	assert.False(t, os.IsNotExist(err), "Kustomization YAML should exist at %s", kustomizationPath)
 }

@@ -172,6 +172,15 @@ issues:
       path: internal/marketplace/
       text: "buildDepTree"
 
+    # cmd.CombinedOutput and cmd.Output errors are often intentionally ignored
+    - linters:
+        - errcheck
+      text: "cmd.CombinedOutput"
+
+    - linters:
+        - errcheck
+      text: "cmd.Output"
+
     - linters:
         - revive
       text: "exported: comment"

@@ -1,0 +1,27 @@
+project:
+  name: test-flux
+  description: Flux test project
+
+platform: kubernetes
+scope: both
+gitops_tool: flux
+preset: standard
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

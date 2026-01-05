@@ -1,0 +1,28 @@
+project:
+  name: test-minimal
+  description: Minimal test project
+
+platform: kubernetes
+scope: infrastructure
+gitops_tool: argocd
+preset: minimal
+
+environments:
+  - name: dev
+
+infra:
+  namespaces: true
+  rbac: false
+  network_policies: false
+  resource_quotas: false
+
+docs:
+  readme: true
+  architecture: false
+  onboarding: false
+
+git:
+  url: https://github.com/test/test-minimal.git
+
+output:
+  type: local

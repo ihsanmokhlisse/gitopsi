@@ -14,6 +14,14 @@ func (g *Generator) generateGitOps() error {
 		}
 	}
 
+	// TODO: Flux support disabled - focus on ArgoCD first
+	// Uncomment when Flux support is ready for production
+	// if g.Config.GitOpsTool == "flux" || g.Config.GitOpsTool == "both" {
+	// 	if err := g.generateFlux(); err != nil {
+	// 		return err
+	// 	}
+	// }
+
 	return nil
 }
 

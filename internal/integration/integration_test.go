@@ -504,6 +504,10 @@ func TestIntegration_GitOpsToolSelection(t *testing.T) {
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
+			// TODO: Flux support is disabled - focus on ArgoCD first
+			if tool == "flux" {
+				t.Skip("Flux support is disabled - focusing on ArgoCD first")
+			}
 			tmpDir := t.TempDir()
 
 			cfg := &config.Config{

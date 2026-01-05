@@ -1,0 +1,27 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  interval: {{ .Interval }}
+  chart:
+    spec:
+      chart: {{ .Chart }}
+      version: {{ .Version }}
+      sourceRef:
+        kind: HelmRepository
+        name: {{ .RepoName }}
+        namespace: {{ .RepoNamespace }}
+  targetNamespace: {{ .TargetNamespace }}
+{{- if .Values }}
+  values:
+{{ .Values | indent 4 }}
+{{- end }}
+{{- if .DependsOn }}
+  dependsOn:
+{{- range .DependsOn }}
+    - name: {{ .Name }}
+      namespace: {{ .Namespace }}
+{{- end }}
+{{- end }}

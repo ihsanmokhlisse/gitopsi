@@ -1,0 +1,17 @@
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Provider
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  type: {{ .Type }}
+{{- if .Address }}
+  address: {{ .Address }}
+{{- end }}
+{{- if .Channel }}
+  channel: {{ .Channel }}
+{{- end }}
+{{- if .SecretRef }}
+  secretRef:
+    name: {{ .SecretRef }}
+{{- end }}

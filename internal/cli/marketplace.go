@@ -942,7 +942,8 @@ var patternValidateCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(patternValidateCmd)
+	// Register as subcommand of marketplace, not root (to avoid overriding main validate command)
+	marketplaceCmd.AddCommand(patternValidateCmd)
 }
 
 func runPatternValidate(cmd *cobra.Command, args []string) error {

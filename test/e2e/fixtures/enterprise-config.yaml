@@ -1,0 +1,30 @@
+project:
+  name: test-enterprise
+  description: Enterprise test project
+
+platform: openshift
+scope: both
+gitops_tool: argocd
+preset: enterprise
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+git:
+  url: https://github.com/test/test-enterprise.git
+
+output:
+  type: local

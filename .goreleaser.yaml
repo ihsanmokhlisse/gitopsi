@@ -103,6 +103,7 @@ changelog:
 
 brews:
   - name: gitopsi
+    skip_upload: auto  # Skip if HOMEBREW_TAP_GITHUB_TOKEN is not set
     repository:
       owner: ihsanmokhlisse
       name: homebrew-tap

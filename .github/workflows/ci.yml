@@ -197,20 +197,17 @@ jobs:
       - name: Test minimal preset
         run: |
           mkdir -p /tmp/test-minimal
-          bin/gitopsi-linux-amd64 init --preset minimal --output /tmp/test-minimal \
-            --project test-minimal --git-url https://github.com/test/repo.git
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/test-minimal
           bin/gitopsi-linux-amd64 validate /tmp/test-minimal/test-minimal
 
       - name: Test standard preset
         run: |
           mkdir -p /tmp/test-standard
-          bin/gitopsi-linux-amd64 init --preset standard --output /tmp/test-standard \
-            --project test-standard --git-url https://github.com/test/repo.git
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test-standard
           bin/gitopsi-linux-amd64 validate /tmp/test-standard/test-standard
 
       - name: Test enterprise preset
         run: |
           mkdir -p /tmp/test-enterprise
-          bin/gitopsi-linux-amd64 init --preset enterprise --output /tmp/test-enterprise \
-            --project test-enterprise --git-url https://github.com/test/repo.git
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/enterprise-config.yaml --output /tmp/test-enterprise
           bin/gitopsi-linux-amd64 validate /tmp/test-enterprise/test-enterprise

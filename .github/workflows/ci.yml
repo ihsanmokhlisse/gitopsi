@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Code not formatted. Run 'make fmt'"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold
+        run: |
+          coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${coverage}%"
+          threshold=40
+          if (( $(echo "$coverage < $threshold" | bc -l) )); then
+            echo "Coverage ${coverage}% is below threshold ${threshold}%"
+            exit 1
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Version=${VERSION} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Commit=${COMMIT} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.BuildDate=${BUILD_DATE}"
+
+          output="bin/gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output="${output}.exe"
+          fi
+
+          go build -ldflags "${LDFLAGS}" -o "${output}" ./cmd/gitopsi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/gitopsi-*
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run integration tests
+        run: go test -v -race ./internal/integration/... -timeout 10m
+
+  regression:
+    name: Regression Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run regression tests
+        run: go test -v -race ./internal/regression/... -timeout 5m
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Run E2E tests
+        run: go test -v -tags=e2e ./test/e2e/... -timeout 10m
+
+  validate-presets:
+    name: Validate Presets
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Test minimal preset
+        run: |
+          mkdir -p /tmp/test-minimal
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/test-minimal
+          bin/gitopsi-linux-amd64 validate /tmp/test-minimal/test-minimal
+
+      - name: Test standard preset
+        run: |
+          mkdir -p /tmp/test-standard
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test-standard
+          bin/gitopsi-linux-amd64 validate /tmp/test-standard/test-standard
+
+      - name: Test enterprise preset
+        run: |
+          mkdir -p /tmp/test-enterprise
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/enterprise-config.yaml --output /tmp/test-enterprise
+          bin/gitopsi-linux-amd64 validate /tmp/test-enterprise/test-enterprise

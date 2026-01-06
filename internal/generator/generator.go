@@ -180,10 +180,26 @@ func (g *Generator) generateStructure() error {
 		}
 	}
 
-	dirs = append(dirs,
-		g.Config.Project.Name+"/"+g.Config.GitOpsTool+"/projects",
-		g.Config.Project.Name+"/"+g.Config.GitOpsTool+"/applicationsets",
-	)
+	// Add GitOps tool-specific directories
+	if g.Config.GitOpsTool == "argocd" || g.Config.GitOpsTool == "both" {
+		dirs = append(dirs,
+			g.Config.Project.Name+"/argocd/projects",
+			g.Config.Project.Name+"/argocd/applicationsets",
+		)
+		if g.Config.IsMultiCluster() {
+			dirs = append(dirs, g.Config.Project.Name+"/argocd/clusters")
+		}
+	}
+
+	// TODO: Flux support disabled - focus on ArgoCD first
+	// Uncomment when Flux support is ready for production
+	// if g.Config.GitOpsTool == "flux" || g.Config.GitOpsTool == "both" {
+	// 	dirs = append(dirs,
+	// 		g.Config.Project.Name+"/flux/sources",
+	// 		g.Config.Project.Name+"/flux/kustomizations",
+	// 		g.Config.Project.Name+"/flux/notifications",
+	// 	)
+	// }
 
 	for _, dir := range dirs {
 		if err := g.Writer.CreateDir(dir); err != nil {

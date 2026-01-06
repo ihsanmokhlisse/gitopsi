@@ -1,0 +1,15 @@
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Alert
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  providerRef:
+    name: {{ .ProviderRef }}
+  eventSeverity: {{ .Severity }}
+  eventSources:
+{{- range .EventSources }}
+    - kind: {{ .Kind }}
+      name: {{ .Name }}
+      namespace: {{ .Namespace }}
+{{- end }}

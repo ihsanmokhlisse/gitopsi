@@ -203,7 +203,7 @@ func TestShouldBootstrap(t *testing.T) {
 			name:       "bootstrap enabled but no cluster URL",
 			enabled:    true,
 			clusterURL: "",
-			want:       false,
+			want:       true, // cluster URL is auto-detected when bootstrap runs
 		},
 		{
 			name:       "both disabled",

@@ -89,7 +89,7 @@ func NewRegistryManager(cacheDir string) *RegistryManager {
 			{
 				Name:     "official",
 				Type:     RegistryTypeOfficial,
-				URL:      "https://raw.githubusercontent.com/gitopsi/patterns/main",
+				URL:      "https://raw.githubusercontent.com/ihsanmokhlisse/gitopsi-patterns/main",
 				Priority: 100,
 				Enabled:  true,
 			},

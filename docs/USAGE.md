@@ -2,6 +2,8 @@
 
 This guide covers all usage scenarios for gitopsi, from basic commands to advanced configurations.
 
+> **v0.2.0 Note**: This release is tested with **ArgoCD + vanilla Kubernetes**. OpenShift, EKS, AKS, and Flux support exist but are not yet validated. See [README](../README.md) for the full support matrix.
+
 ## Table of Contents
 
 - [Installation](#installation)

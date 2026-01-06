@@ -332,7 +332,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		gitSection := prog.StartSection("Git Push")
 
 		initStep := prog.StartStep(gitSection, "Initializing local Git repository...")
-		if gitErr := runGitCommand(ctx, projectPath, "init"); gitErr != nil {
+		// Use configured branch or default to main
+		initBranch := cfg.Git.Branch
+		if initBranch == "" {
+			initBranch = "main"
+		}
+		if gitErr := runGitCommand(ctx, projectPath, "init", "-b", initBranch); gitErr != nil {
 			prog.FailStep(gitSection, initStep, gitErr)
 			return fmt.Errorf("failed to init git repo: %w", gitErr)
 		}
@@ -574,7 +579,8 @@ func shouldPush(cfg *config.Config) bool {
 }
 
 func shouldBootstrap(cfg *config.Config) bool {
-	return cfg.Bootstrap.Enabled && cfg.Cluster.URL != ""
+	// Only check if bootstrap is enabled - cluster URL can be auto-detected later
+	return cfg.Bootstrap.Enabled
 }
 
 func autoDetectCluster(ctx context.Context, cfg *config.Config) error {

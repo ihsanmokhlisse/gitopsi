@@ -106,6 +106,91 @@ Added `t.Skip("Flux support is disabled - focusing on ArgoCD first")` to:
 
 ---
 
+### BUG-006
+
+| Field | Value |
+|-------|-------|
+| Date | 2026-01-05 |
+| Status | fixed |
+| Severity | critical |
+| Related Files | `internal/bootstrap/bootstrap.go` |
+
+**Description:**
+Child ArgoCD Applications fail to sync with error "app is not allowed in project 'applications', or the project does not exist".
+
+**Steps to Reproduce:**
+1. Run `gitopsi init --bootstrap --push`
+2. ArgoCD root app syncs successfully
+3. Child apps (infra-dev, apps-dev, etc.) show "Unknown" status
+4. Error: project doesn't exist
+
+**Root Cause:**
+The bootstrap process creates the root App-of-Apps, which syncs and creates child Applications. These child Applications reference projects named "infrastructure" and "applications". However, these AppProjects only exist in the Git repo and haven't been synced yet - creating a chicken-and-egg problem.
+
+**Fix Applied:**
+Added `createArgoCDProjects()` function in bootstrap.go that creates the "infrastructure" and "applications" AppProjects directly on the cluster BEFORE creating the App-of-Apps. This ensures the projects exist when child applications reference them.
+
+---
+
+### BUG-005
+
+| Field | Value |
+|-------|-------|
+| Date | 2026-01-05 |
+| Status | fixed |
+| Severity | critical |
+| Related Files | `internal/cli/init.go` |
+
+**Description:**
+Bootstrap never runs when `--bootstrap` flag is used without `--cluster` flag, even though auto-detection should work.
+
+**Steps to Reproduce:**
+1. Run `gitopsi init --bootstrap` (without --cluster)
+2. ArgoCD is never deployed
+3. No error message shown
+
+**Root Cause:**
+The `shouldBootstrap()` function at line 581 required BOTH `cfg.Bootstrap.Enabled` AND `cfg.Cluster.URL != ""`. But cluster URL auto-detection only happens INSIDE the `if shouldBootstrap()` block. This chicken-and-egg problem meant that if you didn't explicitly provide `--cluster`, bootstrap would never run.
+
+**Fix Applied:**
+Changed `shouldBootstrap()` to only check `cfg.Bootstrap.Enabled`:
+```go
+// Before: return cfg.Bootstrap.Enabled && cfg.Cluster.URL != ""
+// After:  return cfg.Bootstrap.Enabled
+```
+The cluster URL auto-detection inside the bootstrap block handles the empty URL case.
+
+---
+
+### BUG-004
+
+| Field | Value |
+|-------|-------|
+| Date | 2026-01-05 |
+| Status | fixed |
+| Severity | high |
+| Related Files | `internal/cli/init.go` |
+
+**Description:**
+Git push fails with "src refspec main does not match any" when pushing to a new repository.
+
+**Steps to Reproduce:**
+1. Run `gitopsi init --git-url <url> --push`
+2. Error: `error: src refspec main does not match any`
+
+**Root Cause:**
+The `git init` command at line 335 did not specify the initial branch name. On systems where git defaults to `master`, the local branch is `master`, but gitopsi tries to push `main`. The refspec mismatch causes the push to fail.
+
+**Fix Applied:**
+Added `-b` flag to `git init` command to explicitly set the branch name:
+```go
+// Before: runGitCommand(ctx, projectPath, "init")
+// After:  runGitCommand(ctx, projectPath, "init", "-b", initBranch)
+```
+Where `initBranch` is taken from config or defaults to `main`.
+
+---
+
 ### BUG-000 (Template)
 
 | Field | Value |

@@ -1,0 +1,35 @@
+project:
+  name: gitopsi-e2e
+  description: Full E2E test with hello-world application
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+preset: standard
+
+environments:
+  - name: dev
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: false
+  resource_quotas: false
+
+applications:
+  - name: hello-world
+    image: nginx:alpine
+    port: 80
+    replicas: 1
+
+docs:
+  readme: true
+  architecture: false
+  onboarding: false
+
+git:
+  url: https://github.com/ihsanmokhlisse/gitopsi-e2e-test.git
+  branch: main
+
+output:
+  type: local

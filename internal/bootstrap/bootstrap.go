@@ -162,6 +162,13 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*Result, error) {
 		}
 	}
 
+	// Create AppProjects (required before App-of-Apps can sync child apps)
+	if b.options.Tool == ToolArgoCD {
+		if err := b.createArgoCDProjects(ctx); err != nil {
+			return nil, fmt.Errorf("failed to create AppProjects: %w", err)
+		}
+	}
+
 	// Create App-of-Apps
 	if b.options.CreateAppOfApps {
 		if err := b.createAppOfApps(ctx); err != nil {
@@ -595,6 +602,45 @@ spec:
     branch: %s`, b.options.ProjectName, b.options.Namespace, b.options.RepoURL, branch)
 
 	return b.cluster.Apply(ctx, gitRepo)
+}
+
+// createArgoCDProjects creates the required AppProjects for infrastructure and applications.
+// These must exist before child applications can reference them.
+func (b *Bootstrapper) createArgoCDProjects(ctx context.Context) error {
+	projects := []struct {
+		name        string
+		description string
+	}{
+		{"infrastructure", "Infrastructure resources managed by GitOps"},
+		{"applications", "Application workloads managed by GitOps"},
+	}
+
+	for _, proj := range projects {
+		projectYAML := fmt.Sprintf(`apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  description: %s
+  sourceRepos:
+    - '*'
+  destinations:
+    - namespace: '*'
+      server: '*'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'`, proj.name, b.options.Namespace, proj.description)
+
+		if err := b.cluster.Apply(ctx, projectYAML); err != nil {
+			return fmt.Errorf("failed to create project %s: %w", proj.name, err)
+		}
+	}
+
+	return nil
 }
 
 // createAppOfApps creates the root application.

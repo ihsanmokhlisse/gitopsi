@@ -28,6 +28,9 @@ jobs:
       - name: Run tests
         run: go test -v -race ./...
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

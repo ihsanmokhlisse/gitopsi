@@ -6,6 +6,7 @@ import (
 	"github.com/ihsanmokhlisse/gitopsi/internal/templates"
 )
 
+//nolint:unused // Flux support disabled for v0.2.0, will be enabled in v0.3.0
 func (g *Generator) getFluxNamespace() string {
 	if g.Config.Bootstrap.Namespace != "" {
 		return g.Config.Bootstrap.Namespace
@@ -13,6 +14,7 @@ func (g *Generator) getFluxNamespace() string {
 	return "flux-system"
 }
 
+//nolint:unused // Flux support disabled for v0.2.0, will be enabled in v0.3.0
 func (g *Generator) generateFlux() error {
 	fmt.Println("🔄 Generating Flux configuration...")
 
@@ -29,6 +31,7 @@ func (g *Generator) generateFlux() error {
 	return nil
 }
 
+//nolint:unused // Flux support disabled for v0.2.0, will be enabled in v0.3.0
 func (g *Generator) generateFluxGitRepository(fluxNamespace string) error {
 	repoURL := g.Config.Git.URL
 	if repoURL == "" {
@@ -65,6 +68,7 @@ func (g *Generator) generateFluxGitRepository(fluxNamespace string) error {
 	return nil
 }
 
+//nolint:unused // Flux support disabled for v0.2.0, will be enabled in v0.3.0
 func (g *Generator) generateFluxKustomizations(fluxNamespace string) error {
 	for _, env := range g.Config.Environments {
 		namespace := g.Config.Project.Name + "-" + env.Name
@@ -128,6 +132,7 @@ func (g *Generator) generateFluxKustomizations(fluxNamespace string) error {
 	return nil
 }
 
+//nolint:unused // Flux support disabled for v0.2.0, will be enabled in v0.3.0
 func (g *Generator) generateFluxNotifications(fluxNamespace string) error {
 	// Provider for notifications (e.g., Slack, Discord, etc.)
 	providerData := map[string]any{
@@ -145,8 +150,8 @@ func (g *Generator) generateFluxNotifications(fluxNamespace string) error {
 	}
 
 	path := fmt.Sprintf("%s/%s/notifications/provider.yaml", g.Config.Project.Name, g.Config.GitOpsTool)
-	if err := g.Writer.WriteFile(path, content); err != nil {
-		return err
+	if writeErr := g.Writer.WriteFile(path, content); writeErr != nil {
+		return writeErr
 	}
 
 	// Create event sources for alert

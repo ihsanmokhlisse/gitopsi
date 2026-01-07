@@ -52,10 +52,14 @@ checksum:
   algorithm: sha256
 
 sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}_sbom.spdx.json"
   - id: source
     artifacts: source
     documents:
-      - "{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json"
+      - "{{ .ProjectName }}_{{ .Version }}_source_sbom.spdx.json"
 
 signs:
   - cmd: cosign

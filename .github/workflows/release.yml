@@ -10,10 +10,15 @@ on:
         description: 'Tag to build container for (e.g., v0.2.0)'
         required: true
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel release in progress
+
 permissions:
   contents: write
   packages: write
-  id-token: write  # Required for cosign keyless signing
+  id-token: write  # Required for cosign keyless signing and SLSA provenance
+  actions: read    # Required for SLSA provenance
 
 env:
   GO_VERSION: '1.23'
@@ -23,6 +28,8 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +39,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run tests
         run: go test -v -race ./...
@@ -40,6 +48,7 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Run GoReleaser
+        id: goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -48,6 +57,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Generate subject hashes for SLSA provenance
+        id: hash
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip 2>/dev/null | base64 -w0 > ../hashes.txt || true
+          echo "hashes=$(cat ../hashes.txt)" >> $GITHUB_OUTPUT
+
+  provenance:
+    name: Generate SLSA Provenance
+    needs: [release]
+    if: github.event_name == 'push' && needs.release.outputs.hashes != ''
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.release.outputs.hashes }}"
+      upload-assets: true
 
   container:
     name: Build Container

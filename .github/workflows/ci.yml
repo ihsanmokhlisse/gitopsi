@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: '1.23'
 
@@ -20,6 +24,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Check formatting
         run: |
@@ -35,7 +40,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: latest
+          version: v1.62.0
           args: --timeout=5m
 
   test:
@@ -48,6 +53,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Download dependencies
         run: go mod download
@@ -89,6 +95,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Build
         env:
@@ -125,6 +132,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run integration tests
         run: go test -v -race ./internal/integration/... -timeout 10m
@@ -140,6 +148,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run regression tests
         run: go test -v -race ./internal/regression/... -timeout 5m
@@ -155,6 +164,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -179,6 +189,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Download artifact
         uses: actions/download-artifact@v4

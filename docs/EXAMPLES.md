@@ -615,4 +615,3 @@ gitopsi init --config your-config.yaml --dry-run --verbose
 - [Usage Guide](USAGE.md) - Detailed configuration options
 - [README](../README.md) - Quick start guide
 - [GitHub Issues](https://github.com/ihsanmokhlisse/gitopsi/issues) - Report issues or request features
-

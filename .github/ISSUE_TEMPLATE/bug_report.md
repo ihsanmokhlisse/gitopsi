@@ -37,4 +37,3 @@ Any relevant logs or screenshots.
 ## Additional Context
 
 Any other context about the problem.
-

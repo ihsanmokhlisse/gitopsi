@@ -246,4 +246,3 @@ make container-run ARGS="go test -v -run 'Test.*Config' ./..."
 4. **Table-driven tests** - Use for comprehensive coverage
 5. **Mock external dependencies** - File system, user input
 6. **Test error paths** - Invalid input, missing files
-

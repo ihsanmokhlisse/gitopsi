@@ -34,8 +34,3 @@ allowlist = {paths = ['''_test\.go$''', '''testdata/''']}
 id = "template-examples"
 description = "Template example data"
 allowlist = {paths = ['''\.tmpl$''', '''internal/templates/''']}
-
-
-
-
-

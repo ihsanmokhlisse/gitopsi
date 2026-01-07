@@ -552,4 +552,3 @@ gitopsi init --help
 # Version information
 gitopsi version --verbose
 ```
-

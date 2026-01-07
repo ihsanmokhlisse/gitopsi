@@ -81,4 +81,3 @@ If the `gh` CLI is installed and authenticated, issues are automatically created
 - Test failures
 - Invalid manifests
 - Missing features detected during testing
-

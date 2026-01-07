@@ -158,8 +158,3 @@ install_pre_commit
 verify_setup
 run_initial_checks
 print_summary
-
-
-
-
-

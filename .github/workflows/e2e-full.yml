@@ -295,7 +295,8 @@ jobs:
           argocd login localhost:8080 \
             --username admin \
             --password "${{ steps.argocd-password.outputs.password }}" \
-            --insecure
+            --insecure \
+            --plaintext
 
       - name: Create ArgoCD Application
         run: |

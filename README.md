@@ -3,6 +3,7 @@
 Bootstrap production-ready GitOps repositories for Kubernetes clusters.
 
 [![CI](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/ci.yml/badge.svg)](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/ci.yml)
+[![E2E](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/e2e-full.yml/badge.svg)](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/e2e-full.yml)
 [![Security](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/security.yml/badge.svg)](https://github.com/ihsanmokhlisse/gitopsi/actions/workflows/security.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ihsanmokhlisse/gitopsi)](https://goreportcard.com/report/github.com/ihsanmokhlisse/gitopsi)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -82,6 +83,7 @@ gitopsi init --config gitops.yaml --git-url https://github.com/org/repo.git --pu
 ```
 
 This will:
+
 1. Generate the GitOps repository structure
 2. Push to the Git repository
 3. Install ArgoCD on your current cluster
@@ -168,6 +170,7 @@ my-platform/
 ## Roadmap
 
 ### v0.2.0 (Current)
+
 - ArgoCD support with App-of-Apps pattern
 - Vanilla Kubernetes bootstrap
 - Helm and Manifest bootstrap modes
@@ -175,6 +178,7 @@ my-platform/
 - Pattern marketplace
 
 ### v0.3.0 (Planned)
+
 - OpenShift support with OLM bootstrap
 - EKS and AKS platform optimizations
 - Flux support validation

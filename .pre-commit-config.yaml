@@ -31,44 +31,37 @@ repos:
         args: [--branch, main]
 
   # ==========================================================================
-  # Go formatting
+  # Go formatting, linting, and testing (all local/system hooks)
   # ==========================================================================
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
+  - repo: local
     hooks:
       - id: go-fmt
         name: go fmt
         description: Format Go code with gofmt
         entry: gofmt -w -s
-        language: golang
+        language: system
         types: [go]
 
       - id: go-imports
         name: goimports
         description: Update imports and format with goimports
         entry: goimports -w -local github.com/ihsanmokhlisse/gitopsi
-        language: golang
+        language: system
         types: [go]
 
-  # ==========================================================================
-  # Go static analysis
-  # ==========================================================================
-  - repo: local
-    hooks:
       - id: go-vet
         name: go vet
         description: Run go vet for static analysis
-        entry: go vet
-        language: golang
+        entry: go vet ./...
+        language: system
         types: [go]
         pass_filenames: false
-        args: [./...]
 
       - id: go-mod-tidy
         name: go mod tidy
         description: Tidy go.mod and go.sum
         entry: go mod tidy
-        language: golang
+        language: system
         types: [go]
         pass_filenames: false
 
@@ -76,63 +69,42 @@ repos:
         name: go mod verify
         description: Verify dependencies have expected content
         entry: go mod verify
-        language: golang
+        language: system
         pass_filenames: false
         files: go\.(mod|sum)$
 
-  # ==========================================================================
-  # Go linting with golangci-lint
-  # ==========================================================================
-  - repo: https://github.com/golangci/golangci-lint
-    rev: v1.61.0
-    hooks:
       - id: golangci-lint
         name: golangci-lint
         description: Run golangci-lint (fast linters on changed files)
         entry: golangci-lint run --fix --new-from-rev=HEAD~1
+        language: system
         types: [go]
-        language: golang
         pass_filenames: false
 
-  # ==========================================================================
-  # Go security scanning
-  # ==========================================================================
-  - repo: https://github.com/securego/gosec
-    rev: v2.21.4
-    hooks:
       - id: gosec
         name: gosec
         description: Security scanner for Go code
-        args:
-          - -exclude-dir=internal/git
-          - -exclude=G204
-          - -fmt=text
-          - ./...
+        entry: gosec -exclude-dir=internal/git -exclude=G204 -fmt=text ./...
+        language: system
+        types: [go]
         pass_filenames: false
 
-  # ==========================================================================
-  # Go tests (quick mode for pre-commit)
-  # ==========================================================================
-  - repo: local
-    hooks:
       - id: go-test-short
         name: go test -short
         description: Run short Go tests
-        entry: go test -short -race
-        language: golang
+        entry: go test -short -race ./...
+        language: system
         types: [go]
         pass_filenames: false
-        args: [./...]
         stages: [pre-commit]
 
       - id: go-build
         name: go build
         description: Verify code compiles
-        entry: go build
-        language: golang
+        entry: go build -o /dev/null ./cmd/gitopsi
+        language: system
         types: [go]
         pass_filenames: false
-        args: [-o, /dev/null, ./cmd/gitopsi]
 
   # ==========================================================================
   # Commit message validation (Conventional Commits)
@@ -231,8 +203,3 @@ ci:
   skip:
     - go-test-short  # Tests run in CI
     - gosec          # Security scan runs in CI
-
-
-
-
-

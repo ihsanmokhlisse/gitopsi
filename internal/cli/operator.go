@@ -20,7 +20,7 @@ var operatorCmd = &cobra.Command{
 	Short: "Manage Kubernetes operators in your GitOps configuration",
 	Long: `Manage Kubernetes operators in your GitOps configuration.
 
-This command provides subcommands to add, remove, and list operators 
+This command provides subcommands to add, remove, and list operators
 that will be deployed via OLM (Operator Lifecycle Manager).`,
 }
 

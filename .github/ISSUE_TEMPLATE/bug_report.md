@@ -26,9 +26,9 @@ What actually happens.
 
 ## Environment
 
-- OS: 
-- gitopsi version: 
-- Go version: 
+- OS:
+- gitopsi version:
+- Go version:
 
 ## Logs/Screenshots
 

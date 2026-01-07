@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: '1.23'
 
@@ -20,6 +24,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Check formatting
         run: |
@@ -35,19 +40,24 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: latest
+          version: v1.62.0
           args: --timeout=5m
 
   test:
-    name: Test
+    name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.22', '1.23']
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go ${{ matrix.go-version }}
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: ${{ matrix.go-version }}
+          cache: true
 
       - name: Download dependencies
         run: go mod download
@@ -56,6 +66,7 @@ jobs:
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage threshold
+        if: matrix.go-version == env.GO_VERSION
         run: |
           coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
           echo "Coverage: ${coverage}%"
@@ -66,6 +77,7 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
+        if: matrix.go-version == env.GO_VERSION
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
@@ -89,6 +101,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Build
         env:
@@ -125,6 +138,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run integration tests
         run: go test -v -race ./internal/integration/... -timeout 10m
@@ -140,6 +154,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run regression tests
         run: go test -v -race ./internal/regression/... -timeout 5m
@@ -155,6 +170,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -179,6 +195,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Download artifact
         uses: actions/download-artifact@v4

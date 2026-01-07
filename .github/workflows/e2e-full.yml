@@ -1,0 +1,685 @@
+name: E2E Full Test
+
+on:
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: 'Preset to test (minimal, standard, enterprise, all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - minimal
+          - standard
+          - enterprise
+      debug:
+        description: 'Enable debug logging'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: e2e-full-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.23'
+  KIND_VERSION: 'v0.24.0'
+  ARGOCD_VERSION: '2.13.2'
+  KUSTOMIZE_VERSION: '5.5.0'
+  HELM_VERSION: '3.16.3'
+  # Test branch naming pattern
+  TEST_BRANCH_PREFIX: 'test/e2e'
+
+permissions:
+  contents: write      # Push test branches, delete after
+  issues: write        # Create issues on failure
+  actions: read        # Read workflow info for reporting
+
+jobs:
+  # ===========================================================================
+  # Setup Phase: Prepare environment and build binary
+  # ===========================================================================
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      commit: ${{ steps.info.outputs.commit }}
+      branch_name: ${{ steps.info.outputs.branch_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate build info
+        id: info
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          BRANCH_NAME="${TEST_BRANCH_PREFIX}-${VERSION}-${COMMIT}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "::notice::Test branch will be: ${BRANCH_NAME}"
+
+  build:
+    name: Build Binary
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build gitopsi binary
+        run: |
+          LDFLAGS="-s -w -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Version=${{ needs.setup.outputs.version }} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Commit=${{ needs.setup.outputs.commit }} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o bin/gitopsi ./cmd/gitopsi
+
+      - name: Verify binary
+        run: |
+          ./bin/gitopsi version
+          ./bin/gitopsi --help
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin/gitopsi
+          retention-days: 1
+
+  # ===========================================================================
+  # Cluster Setup: Create kind cluster
+  # ===========================================================================
+  cluster:
+    name: Create Kind Cluster
+    needs: [setup]
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_ready: ${{ steps.verify.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Create kind cluster
+        run: |
+          cat <<EOF | kind create cluster --name e2e-test --config=-
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              extraPortMappings:
+                - containerPort: 30080
+                  hostPort: 30080
+                  protocol: TCP
+                - containerPort: 30443
+                  hostPort: 30443
+                  protocol: TCP
+          EOF
+        timeout-minutes: 3
+
+      - name: Verify cluster
+        id: verify
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          echo "ready=true" >> $GITHUB_OUTPUT
+
+      - name: Upload kubeconfig
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubeconfig
+          path: ~/.kube/config
+          retention-days: 1
+
+  # ===========================================================================
+  # Manifest Generation: Test all presets
+  # ===========================================================================
+  generate-minimal:
+    name: Generate Minimal Preset
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.preset == 'all' || github.event.inputs.preset == 'minimal' || github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- ${{ env.KUSTOMIZE_VERSION }}
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Generate manifests
+        run: |
+          mkdir -p output
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/minimal-config.yaml \
+            --output output/minimal \
+            --verbose
+
+      - name: Validate YAML syntax
+        run: |
+          find output/minimal -name "*.yaml" -o -name "*.yml" | while read f; do
+            echo "Validating: $f"
+            yq eval '.' "$f" > /dev/null || exit 1
+          done
+
+      - name: Validate with kustomize build
+        run: |
+          for dir in output/minimal/*/overlays/*/; do
+            if [ -f "${dir}kustomization.yaml" ]; then
+              echo "Building: $dir"
+              kustomize build "$dir" > /dev/null || exit 1
+            fi
+          done
+
+      - name: Run gitopsi validate
+        run: ./bin/gitopsi validate output/minimal
+
+      - name: Upload generated manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifests-minimal
+          path: output/minimal
+          retention-days: 1
+
+  generate-standard:
+    name: Generate Standard Preset
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.preset == 'all' || github.event.inputs.preset == 'standard' || github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- ${{ env.KUSTOMIZE_VERSION }}
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Generate manifests
+        run: |
+          mkdir -p output
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output output/standard \
+            --verbose
+
+      - name: Validate YAML syntax
+        run: |
+          find output/standard -name "*.yaml" -o -name "*.yml" | while read f; do
+            echo "Validating: $f"
+            yq eval '.' "$f" > /dev/null || exit 1
+          done
+
+      - name: Validate with kustomize build
+        run: |
+          for dir in output/standard/*/overlays/*/; do
+            if [ -f "${dir}kustomization.yaml" ]; then
+              echo "Building: $dir"
+              kustomize build "$dir" > /dev/null || exit 1
+            fi
+          done
+
+      - name: Run gitopsi validate
+        run: ./bin/gitopsi validate output/standard
+
+      - name: Upload generated manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifests-standard
+          path: output/standard
+          retention-days: 1
+
+  generate-enterprise:
+    name: Generate Enterprise Preset
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.preset == 'all' || github.event.inputs.preset == 'enterprise' || github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- ${{ env.KUSTOMIZE_VERSION }}
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Generate manifests
+        run: |
+          mkdir -p output
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/enterprise-config.yaml \
+            --output output/enterprise \
+            --verbose
+
+      - name: Validate YAML syntax
+        run: |
+          find output/enterprise -name "*.yaml" -o -name "*.yml" | while read f; do
+            echo "Validating: $f"
+            yq eval '.' "$f" > /dev/null || exit 1
+          done
+
+      - name: Validate with kustomize build
+        run: |
+          for dir in output/enterprise/*/overlays/*/; do
+            if [ -f "${dir}kustomization.yaml" ]; then
+              echo "Building: $dir"
+              kustomize build "$dir" > /dev/null || exit 1
+            fi
+          done
+
+      - name: Run gitopsi validate
+        run: ./bin/gitopsi validate output/enterprise
+
+      - name: Upload generated manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifests-enterprise
+          path: output/enterprise
+          retention-days: 1
+
+  # ===========================================================================
+  # Git Phase: Push manifests to test branch
+  # ===========================================================================
+  git-push:
+    name: Push to Test Branch
+    needs: [setup, generate-standard]
+    runs-on: ubuntu-latest
+    outputs:
+      branch_pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download standard manifests
+        uses: actions/download-artifact@v4
+        with:
+          name: manifests-standard
+          path: manifests
+
+      - name: Create and push test branch
+        id: push
+        run: |
+          BRANCH_NAME="${{ needs.setup.outputs.branch_name }}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create orphan branch with manifests
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+
+          # Copy generated manifests
+          cp -r manifests/* .
+
+          # Commit and push
+          git add -A
+          git commit -m "E2E test manifests for ${{ needs.setup.outputs.version }}-${{ needs.setup.outputs.commit }}"
+          git push origin "${BRANCH_NAME}"
+
+          echo "pushed=true" >> $GITHUB_OUTPUT
+          echo "::notice::Pushed manifests to branch: ${BRANCH_NAME}"
+
+      - name: Verify branch exists
+        run: |
+          BRANCH_NAME="${{ needs.setup.outputs.branch_name }}"
+          if gh api repos/${{ github.repository }}/branches/${BRANCH_NAME} > /dev/null 2>&1; then
+            echo "Branch ${BRANCH_NAME} exists and is accessible"
+          else
+            echo "::error::Branch ${BRANCH_NAME} not found!"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ===========================================================================
+  # Bootstrap Phase: Install ArgoCD on kind cluster
+  # ===========================================================================
+  bootstrap:
+    name: Bootstrap ArgoCD
+    needs: [cluster]
+    runs-on: ubuntu-latest
+    outputs:
+      argocd_ready: ${{ steps.verify.outputs.ready }}
+      admin_password: ${{ steps.password.outputs.password }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: ~/.kube
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v${{ env.HELM_VERSION }}-linux-amd64.tar.gz | tar xz
+          sudo mv linux-amd64/helm /usr/local/bin/
+          helm version
+
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+          argocd version --client
+
+      - name: Add ArgoCD Helm repo
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+
+      - name: Install ArgoCD
+        run: |
+          kubectl create namespace argocd || true
+          helm install argocd argo/argo-cd \
+            --namespace argocd \
+            --set server.service.type=NodePort \
+            --set server.service.nodePortHttp=30080 \
+            --set server.service.nodePortHttps=30443 \
+            --set configs.params."server\.insecure"=true \
+            --wait \
+            --timeout 5m
+        timeout-minutes: 5
+
+      - name: Wait for ArgoCD to be ready
+        run: |
+          kubectl -n argocd wait --for=condition=available deployment/argocd-server --timeout=180s
+          kubectl -n argocd wait --for=condition=available deployment/argocd-repo-server --timeout=180s
+          kubectl -n argocd wait --for=condition=available deployment/argocd-applicationset-controller --timeout=180s
+          kubectl -n argocd get pods
+
+      - name: Get admin password
+        id: password
+        run: |
+          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "::add-mask::${PASSWORD}"
+          echo "password=${PASSWORD}" >> $GITHUB_OUTPUT
+
+      - name: Verify ArgoCD is accessible
+        id: verify
+        run: |
+          # Port-forward in background
+          kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+          sleep 5
+
+          # Login and verify
+          argocd login localhost:8080 --username admin --password "${{ steps.password.outputs.password }}" --insecure
+          argocd app list
+
+          echo "ready=true" >> $GITHUB_OUTPUT
+
+  # ===========================================================================
+  # Sync Phase: Create ArgoCD Application and verify sync
+  # ===========================================================================
+  sync:
+    name: Sync Verification
+    needs: [setup, git-push, bootstrap]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: ~/.kube
+
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+
+      - name: Login to ArgoCD
+        run: |
+          kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+          sleep 5
+          argocd login localhost:8080 --username admin --password "${{ needs.bootstrap.outputs.admin_password }}" --insecure
+
+      - name: Create ArgoCD Application
+        run: |
+          BRANCH_NAME="${{ needs.setup.outputs.branch_name }}"
+
+          argocd app create e2e-test-app \
+            --repo https://github.com/${{ github.repository }}.git \
+            --revision "${BRANCH_NAME}" \
+            --path "infrastructure/overlays/dev" \
+            --dest-server https://kubernetes.default.svc \
+            --dest-namespace dev \
+            --sync-policy automated \
+            --auto-prune \
+            --self-heal
+
+      - name: Trigger sync
+        run: |
+          argocd app sync e2e-test-app --timeout 300
+
+      - name: Wait for sync completion
+        run: |
+          argocd app wait e2e-test-app --sync --timeout 300
+        timeout-minutes: 5
+
+      - name: Verify sync status
+        run: |
+          STATUS=$(argocd app get e2e-test-app -o json | jq -r '.status.sync.status')
+          HEALTH=$(argocd app get e2e-test-app -o json | jq -r '.status.health.status')
+
+          echo "Sync Status: ${STATUS}"
+          echo "Health Status: ${HEALTH}"
+
+          if [ "${STATUS}" != "Synced" ]; then
+            echo "::error::Application not synced. Status: ${STATUS}"
+            argocd app get e2e-test-app
+            exit 1
+          fi
+
+      - name: Verify resources in cluster
+        run: |
+          echo "=== Namespaces ==="
+          kubectl get namespaces
+
+          echo "=== Dev namespace resources ==="
+          kubectl get all -n dev || echo "Dev namespace may not exist yet"
+
+  # ===========================================================================
+  # CLI Testing: Test all major commands
+  # ===========================================================================
+  cli-test:
+    name: CLI Command Testing
+    needs: [build, cluster]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: ~/.kube
+
+      - name: Test version command
+        run: |
+          ./bin/gitopsi version
+          test $? -eq 0 || exit 1
+
+      - name: Test help commands
+        run: |
+          ./bin/gitopsi --help
+          ./bin/gitopsi init --help
+          ./bin/gitopsi validate --help
+          ./bin/gitopsi preflight --help
+          ./bin/gitopsi env --help
+          ./bin/gitopsi auth --help
+
+      - name: Test validate command
+        run: |
+          mkdir -p test-output
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/minimal-config.yaml \
+            --output test-output \
+            --verbose
+
+          ./bin/gitopsi validate test-output
+          test $? -eq 0 || exit 1
+
+      - name: Test preflight command
+        run: |
+          ./bin/gitopsi preflight || echo "Preflight may have warnings, continuing..."
+
+      - name: Test env list command
+        run: |
+          ./bin/gitopsi env list || echo "No envs configured yet"
+
+  # ===========================================================================
+  # Cleanup Phase: Delete test resources
+  # ===========================================================================
+  cleanup:
+    name: Cleanup
+    needs: [setup, sync, cli-test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete test branch
+        run: |
+          BRANCH_NAME="${{ needs.setup.outputs.branch_name }}"
+          if [ -n "${BRANCH_NAME}" ]; then
+            echo "Deleting branch: ${BRANCH_NAME}"
+            gh api -X DELETE repos/${{ github.repository }}/git/refs/heads/${BRANCH_NAME} || echo "Branch may not exist"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Delete kind cluster
+        run: |
+          if command -v kind &> /dev/null; then
+            kind delete cluster --name e2e-test || echo "Cluster may not exist"
+          fi
+
+      - name: Cleanup summary
+        run: |
+          echo "## E2E Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Test branch: ${{ needs.setup.outputs.branch_name }} (deleted)" >> $GITHUB_STEP_SUMMARY
+          echo "- Kind cluster: e2e-test (deleted)" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Reporting Phase: Create issue on failure
+  # ===========================================================================
+  report-failure:
+    name: Report Failure
+    needs: [setup, build, cluster, generate-minimal, generate-standard, generate-enterprise, git-push, bootstrap, sync, cli-test, cleanup]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Check for existing issue
+        id: check
+        run: |
+          EXISTING=$(gh issue list --repo ${{ github.repository }} --label "e2e-failure" --state open --json number --jq 'length')
+          if [ "${EXISTING}" -gt "0" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create failure issue
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.setup.outputs.version }}
+          COMMIT: ${{ needs.setup.outputs.commit }}
+          BRANCH_NAME: ${{ needs.setup.outputs.branch_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          cat <<EOF > /tmp/issue_body.md
+          ## E2E Test Failure
+
+          **Workflow Run**: ${RUN_URL}
+
+          **Version**: ${VERSION}
+          **Commit**: ${COMMIT}
+          **Branch**: ${REF_NAME}
+          **Triggered**: ${EVENT_NAME}
+
+          ### Failed Jobs
+          Please check the workflow run for details on which jobs failed.
+
+          ### Debug Information
+          - Test branch: \`${BRANCH_NAME}\`
+          - Go version: \`${{ env.GO_VERSION }}\`
+          - Kind version: \`${{ env.KIND_VERSION }}\`
+          - ArgoCD version: \`${{ env.ARGOCD_VERSION }}\`
+
+          ### Next Steps
+          1. Check the failed job logs
+          2. Reproduce locally if possible
+          3. Fix the issue and re-run the workflow
+          EOF
+
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "E2E Test Failure: ${VERSION}-${COMMIT}" \
+            --label "e2e-failure,bug" \
+            --body-file /tmp/issue_body.md
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-artifacts
+          path: |
+            ~/.kube/config
+          retention-days: 7
+          if-no-files-found: ignore

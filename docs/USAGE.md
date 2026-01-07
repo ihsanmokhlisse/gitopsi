@@ -447,14 +447,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Generate GitOps structure
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             ghcr.io/ihsanmokhlisse/gitopsi:latest \
             init --config /workspace/gitops.yaml
-            
+
       - name: Commit and push
         run: |
           git config user.name "GitHub Actions"
@@ -552,4 +552,3 @@ gitopsi init --help
 # Version information
 gitopsi version --verbose
 ```
-

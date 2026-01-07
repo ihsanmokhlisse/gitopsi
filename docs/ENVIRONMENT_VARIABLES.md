@@ -125,7 +125,3 @@ gitopsi ensures:
 gitopsi init --bootstrap --push
 # Error: git.url is required - gitopsi generates GitOps manifests that sync from Git
 ```
-
-
-
-

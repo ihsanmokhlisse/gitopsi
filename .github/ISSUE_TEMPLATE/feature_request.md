@@ -32,4 +32,3 @@ Any other context, mockups, or examples.
 
 - [ ] I have searched existing issues to ensure this is not a duplicate
 - [ ] This feature aligns with the project roadmap
-

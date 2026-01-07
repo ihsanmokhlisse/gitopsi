@@ -238,6 +238,185 @@ make container-run ARGS="go test -v -run 'Test.*Config' ./..."
 
 ---
 
+## E2E Full Testing (CI)
+
+The E2E full testing workflow (`e2e-full.yml`) runs comprehensive end-to-end tests using a real Kubernetes cluster.
+
+### Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    E2E Full Test Workflow                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. SETUP                                                           │
+│     ├── Build gitopsi binary                                        │
+│     └── Create kind Kubernetes cluster                              │
+│                                                                     │
+│  2. GENERATE & VALIDATE                                             │
+│     ├── Run gitopsi init with minimal/standard/enterprise presets   │
+│     ├── Validate YAML syntax with yq                                │
+│     ├── Run kustomize build on all overlays                         │
+│     └── Run gitopsi validate                                        │
+│                                                                     │
+│  3. GIT PUSH                                                        │
+│     ├── Create test branch: test/e2e-{version}-{commit}             │
+│     └── Push generated manifests to GitHub                          │
+│                                                                     │
+│  4. BOOTSTRAP                                                       │
+│     ├── Install ArgoCD via Helm                                     │
+│     ├── Wait for ArgoCD to be ready                                 │
+│     └── Configure argocd CLI                                        │
+│                                                                     │
+│  5. SYNC                                                            │
+│     ├── Create ArgoCD Application pointing to test branch           │
+│     ├── Trigger sync and wait for completion                        │
+│     └── Verify resources created in cluster                         │
+│                                                                     │
+│  6. CLI TESTING                                                     │
+│     ├── Test all major CLI commands                                 │
+│     └── Verify exit codes and output                                │
+│                                                                     │
+│  7. CLEANUP                                                         │
+│     ├── Delete test branch from GitHub                              │
+│     └── Delete kind cluster                                         │
+│                                                                     │
+│  8. REPORTING (on failure)                                          │
+│     ├── Create GitHub issue with failure details                    │
+│     └── Upload debugging artifacts                                  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Trigger Conditions
+
+| Trigger | Frequency | Purpose |
+|---------|-----------|---------|
+| Schedule | Weekly (Sun 2AM UTC) | Catch regressions |
+| workflow_dispatch | Manual | On-demand testing |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GO_VERSION` | Go version (default: 1.23) |
+| `KIND_VERSION` | Kind version (default: v0.24.0) |
+| `ARGOCD_VERSION` | ArgoCD version (default: 2.13.2) |
+| `KUSTOMIZE_VERSION` | Kustomize version (default: 5.5.0) |
+| `HELM_VERSION` | Helm version (default: 3.16.3) |
+
+### Manual Trigger Options
+
+1. Go to Actions → E2E Full Test → Run workflow
+2. Select options:
+   - **preset**: Which preset to test (all, minimal, standard, enterprise)
+   - **debug**: Enable debug logging
+
+### Test Branch Naming
+
+Test branches follow the pattern: `test/e2e-{version}-{commit}`
+
+Example: `test/e2e-v0.2.0-abc1234`
+
+These branches are automatically deleted after the test completes (success or failure).
+
+---
+
+## Running E2E Tests Locally
+
+### Prerequisites
+
+- Podman or Docker
+- kind installed
+- kubectl configured
+- kustomize installed
+- ArgoCD CLI (for sync tests)
+
+### Basic E2E Tests (No Cluster)
+
+```bash
+# Build and run basic E2E tests
+podman run --rm -v $(pwd):/app:Z golang:1.23 sh -c \
+  "cd /app && go build -o bin/gitopsi ./cmd/gitopsi && \
+   go test -tags=e2e ./test/e2e/..."
+```
+
+### Full E2E with kind Cluster
+
+```bash
+# 1. Create kind cluster
+kind create cluster --name gitopsi-e2e
+
+# 2. Build binary
+go build -o bin/gitopsi ./cmd/gitopsi
+
+# 3. Set environment variables
+export KUBECONFIG=$(kind get kubeconfig --name gitopsi-e2e)
+export E2E_CLUSTER=true
+
+# 4. Run E2E tests
+go test -tags=e2e -v ./test/e2e/...
+
+# 5. Cleanup
+kind delete cluster --name gitopsi-e2e
+```
+
+### E2E with ArgoCD
+
+```bash
+# Prerequisites: kind cluster running
+
+# 1. Install ArgoCD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl wait --for=condition=available -n argocd deployment/argocd-server --timeout=300s
+
+# 2. Set environment
+export E2E_CLUSTER=true
+export E2E_ARGOCD=true
+export ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+
+# 3. Run bootstrap tests
+go test -tags=e2e -v -run TestArgoCD ./test/e2e/...
+```
+
+---
+
+## Debugging E2E Failures
+
+### Viewing Logs
+
+1. Go to Actions → E2E Full Test → [Failed Run]
+2. Expand failed job to see logs
+3. Download artifacts for kubeconfig and generated manifests
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| kind cluster creation timeout | Resource limits | Increase timeout or use smaller cluster |
+| ArgoCD not ready | Pod startup time | Check pod logs in ArgoCD namespace |
+| Sync failure | Invalid manifests | Run kustomize build locally |
+| Branch push failed | Permissions | Check GitHub_TOKEN permissions |
+
+### Reproducing Locally
+
+```bash
+# Use same versions as CI
+export KIND_VERSION=v0.24.0
+export ARGOCD_VERSION=2.13.2
+
+# Create identical environment
+kind create cluster --name e2e-test
+
+# Follow workflow steps manually
+./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test
+kustomize build /tmp/test/test-standard/infrastructure/overlays/dev
+./bin/gitopsi validate /tmp/test/test-standard
+```
+
+---
+
 ## Best Practices
 
 1. **Always test in container** - Never test directly on host
@@ -246,4 +425,4 @@ make container-run ARGS="go test -v -run 'Test.*Config' ./..."
 4. **Table-driven tests** - Use for comprehensive coverage
 5. **Mock external dependencies** - File system, user input
 6. **Test error paths** - Invalid input, missing files
-
+7. **Check E2E status** - Review weekly E2E runs for regressions

@@ -30,7 +30,7 @@ run_step() {
     echo ""
     echo -e "${BLUE}[$step] $name${NC}"
     echo "────────────────────────────────────────────────────────────────────────"
-    
+
     if "$@"; then
         echo -e "${GREEN}✅ $name - Passed${NC}"
         ((passed++))
@@ -185,11 +185,11 @@ if [ "$MODE" = "integration" ]; then
 else
     run_step "Building binaries" bash -c '
         mkdir -p bin
-        
+
         # Determine current platform
         current_os=$(go env GOOS)
         current_arch=$(go env GOARCH)
-        
+
         if [ "$MODE" = "quick" ]; then
             # Quick mode: only build for current platform
             echo "Building for current platform: ${current_os}/${current_arch}..."
@@ -223,23 +223,23 @@ if [ "$MODE" = "full" ]; then
         if [ ! -f "$binary" ]; then
             binary="bin/gitopsi-$(go env GOOS)-$(go env GOARCH)"
         fi
-        
+
         if [ ! -f "$binary" ]; then
             echo "Binary not found, skipping E2E test"
             exit 0
         fi
-        
+
         chmod +x "$binary"
-        
+
         # Test version
         echo "Testing version command..."
         "$binary" version
-        
+
         # Test generation
         echo "Testing project generation..."
         tmpdir=$(mktemp -d)
         cd "$tmpdir"
-        
+
         cat > test-config.yaml << EOF
 project:
   name: ci-local-test
@@ -252,15 +252,15 @@ infrastructure:
 docs:
   readme: true
 EOF
-        
+
         "$OLDPWD/$binary" init --config test-config.yaml
-        
+
         # Verify output
         if [ ! -f ci-local-test/README.md ]; then
             echo "Generation failed - README.md not found"
             exit 1
         fi
-        
+
         echo "E2E smoke test passed"
         cd -
         rm -rf "$tmpdir"

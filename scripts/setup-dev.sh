@@ -32,12 +32,12 @@ install_go_tools() {
     echo ""
     echo -e "${YELLOW}Installing Go tools...${NC}"
     echo "────────────────────────────────────────────────────────────────────────"
-    
+
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     go install golang.org/x/tools/cmd/goimports@latest
     go install github.com/securego/gosec/v2/cmd/gosec@latest
     go install golang.org/x/vuln/cmd/govulncheck@latest
-    
+
     echo -e "${GREEN}✓ Go tools installed${NC}"
 }
 
@@ -45,7 +45,7 @@ install_pre_commit() {
     echo ""
     echo -e "${YELLOW}Setting up pre-commit hooks...${NC}"
     echo "────────────────────────────────────────────────────────────────────────"
-    
+
     if ! check_command pre-commit; then
         echo "Installing pre-commit..."
         if check_command pip3; then
@@ -59,11 +59,11 @@ install_pre_commit() {
             return 1
         fi
     fi
-    
+
     echo "Installing pre-commit hooks..."
     pre-commit install
     pre-commit install --hook-type commit-msg
-    
+
     echo -e "${GREEN}✓ Pre-commit hooks installed${NC}"
 }
 
@@ -71,9 +71,9 @@ verify_setup() {
     echo ""
     echo -e "${YELLOW}Verifying setup...${NC}"
     echo "────────────────────────────────────────────────────────────────────────"
-    
+
     local all_good=true
-    
+
     check_command go || all_good=false
     check_command git || all_good=false
     check_command gofmt || all_good=false
@@ -81,7 +81,7 @@ verify_setup() {
     check_command golangci-lint || all_good=false
     check_command gosec || all_good=false
     check_command pre-commit || all_good=false
-    
+
     # Optional tools
     echo ""
     echo "Optional tools:"
@@ -89,7 +89,7 @@ verify_setup() {
     check_command podman || echo "  (alternative to docker)"
     check_command kubectl || echo "  (needed for E2E tests)"
     check_command oc || echo "  (needed for OpenShift tests)"
-    
+
     if [ "$all_good" = true ]; then
         return 0
     else
@@ -101,16 +101,16 @@ run_initial_checks() {
     echo ""
     echo -e "${YELLOW}Running initial checks...${NC}"
     echo "────────────────────────────────────────────────────────────────────────"
-    
+
     echo "Downloading Go modules..."
     go mod download
-    
+
     echo "Verifying modules..."
     go mod verify
-    
+
     echo "Running pre-commit on all files..."
     pre-commit run --all-files || true
-    
+
     echo -e "${GREEN}✓ Initial checks complete${NC}"
 }
 
@@ -158,8 +158,3 @@ install_pre_commit
 verify_setup
 run_initial_checks
 print_summary
-
-
-
-
-

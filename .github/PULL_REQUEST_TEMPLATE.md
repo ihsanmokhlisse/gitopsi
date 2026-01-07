@@ -37,4 +37,3 @@ Fixes #(issue number)
 ## Screenshots (if applicable)
 
 ## Additional Notes
-

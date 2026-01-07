@@ -26,9 +26,9 @@ What actually happens.
 
 ## Environment
 
-- OS: 
-- gitopsi version: 
-- Go version: 
+- OS:
+- gitopsi version:
+- Go version:
 
 ## Logs/Screenshots
 
@@ -37,4 +37,3 @@ Any relevant logs or screenshots.
 ## Additional Context
 
 Any other context about the problem.
-

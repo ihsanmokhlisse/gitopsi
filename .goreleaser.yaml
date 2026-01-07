@@ -52,10 +52,14 @@ checksum:
   algorithm: sha256
 
 sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}_sbom.spdx.json"
   - id: source
     artifacts: source
     documents:
-      - "{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json"
+      - "{{ .ProjectName }}_{{ .Version }}_source_sbom.spdx.json"
 
 signs:
   - cmd: cosign
@@ -147,56 +151,80 @@ release:
   name_template: "v{{.Version}}"
   header: |
     ## 🚀 gitopsi v{{.Version}}
-    
+
     Bootstrap production-ready GitOps repositories for Kubernetes, OpenShift, AKS, and EKS.
-    
+
     ### Security
     - ✅ All binaries are signed with cosign
     - ✅ SBOM (Software Bill of Materials) included
     - ✅ Container images scanned for vulnerabilities
-    
+
   footer: |
     ---
-    
+
     ## 📦 Installation
-    
+
     ### Homebrew (macOS/Linux)
     ```bash
     brew install ihsanmokhlisse/tap/gitopsi
     ```
-    
+
     ### Linux (deb)
     ```bash
     curl -LO https://github.com/ihsanmokhlisse/gitopsi/releases/download/v{{.Version}}/gitopsi_{{.Version}}_linux_amd64.deb
     sudo dpkg -i gitopsi_{{.Version}}_linux_amd64.deb
     ```
-    
+
     ### Linux (rpm)
     ```bash
     curl -LO https://github.com/ihsanmokhlisse/gitopsi/releases/download/v{{.Version}}/gitopsi_{{.Version}}_linux_amd64.rpm
     sudo rpm -i gitopsi_{{.Version}}_linux_amd64.rpm
     ```
-    
+
     ### Windows
     Download `gitopsi_{{.Version}}_windows_amd64.zip` from assets and add to PATH.
-    
+
     ### Container
     ```bash
     # Pull from GitHub Container Registry
     docker pull ghcr.io/ihsanmokhlisse/gitopsi:{{.Version}}
-    
+
     # Verify signature
     cosign verify ghcr.io/ihsanmokhlisse/gitopsi:{{.Version}}
-    
+
     # Run
     docker run --rm -v $(pwd):/workspace ghcr.io/ihsanmokhlisse/gitopsi:{{.Version}} init
     ```
-    
+
     ### Verify Binary Signature
     ```bash
     cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt
     ```
-    
+
     ---
-    
+
     **Full Changelog**: https://github.com/ihsanmokhlisse/gitopsi/compare/v{{ .PreviousTag }}...v{{.Version}}
+
+# Release announcements (optional - requires webhook secrets)
+# Set DISCORD_WEBHOOK_ID and DISCORD_WEBHOOK_TOKEN for Discord
+# Set SLACK_WEBHOOK for Slack
+announce:
+  discord:
+    enabled: '{{ if index .Env "DISCORD_WEBHOOK_ID" }}true{{ else }}false{{ end }}'
+    message_template: |
+      **{{ .ProjectName }} {{ .Tag }}** has been released! 🚀
+
+      {{ .TagSubject }}
+
+      📦 **Download**: {{ .ReleaseURL }}
+      🐳 **Container**: `docker pull ghcr.io/ihsanmokhlisse/gitopsi:{{ .Version }}`
+
+  slack:
+    enabled: '{{ if index .Env "SLACK_WEBHOOK" }}true{{ else }}false{{ end }}'
+    message_template: |
+      *{{ .ProjectName }} {{ .Tag }}* has been released! :rocket:
+
+      {{ .TagSubject }}
+
+      :package: *Download*: {{ .ReleaseURL }}
+      :whale: *Container*: `docker pull ghcr.io/ihsanmokhlisse/gitopsi:{{ .Version }}`

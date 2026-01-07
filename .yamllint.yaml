@@ -81,8 +81,3 @@ rules:
   quoted-strings:
     quote-type: any
     required: false
-
-
-
-
-

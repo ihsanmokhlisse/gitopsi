@@ -1,0 +1,78 @@
+name: Reusable Go Test
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.23'
+      test-flags:
+        description: 'Additional flags for go test'
+        required: false
+        type: string
+        default: '-v -race'
+      test-path:
+        description: 'Path pattern to test'
+        required: false
+        type: string
+        default: './...'
+      timeout:
+        description: 'Test timeout'
+        required: false
+        type: string
+        default: '10m'
+      coverage:
+        description: 'Generate coverage report'
+        required: false
+        type: boolean
+        default: false
+      coverage-threshold:
+        description: 'Minimum coverage percentage'
+        required: false
+        type: number
+        default: 0
+
+jobs:
+  test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ inputs.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: |
+          if [ "${{ inputs.coverage }}" = "true" ]; then
+            go test ${{ inputs.test-flags }} -coverprofile=coverage.out -covermode=atomic ${{ inputs.test-path }} -timeout ${{ inputs.timeout }}
+          else
+            go test ${{ inputs.test-flags }} ${{ inputs.test-path }} -timeout ${{ inputs.timeout }}
+          fi
+
+      - name: Check coverage threshold
+        if: inputs.coverage && inputs.coverage-threshold > 0
+        run: |
+          coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${coverage}%"
+          threshold=${{ inputs.coverage-threshold }}
+          if (( $(echo "$coverage < $threshold" | bc -l) )); then
+            echo "Coverage ${coverage}% is below threshold ${threshold}%"
+            exit 1
+          fi
+
+      - name: Upload coverage artifact
+        if: inputs.coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ inputs.go-version }}
+          path: coverage.out
+          retention-days: 7

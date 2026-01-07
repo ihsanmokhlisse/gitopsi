@@ -17,8 +17,9 @@ concurrency:
 permissions:
   contents: write
   packages: write
-  id-token: write  # Required for cosign keyless signing and SLSA provenance
-  actions: read    # Required for SLSA provenance
+  id-token: write       # Required for cosign keyless signing and SLSA provenance
+  actions: read         # Required for SLSA provenance
+  security-events: write # Required for uploading Trivy SARIF results
 
 env:
   GO_VERSION: '1.23'
@@ -139,6 +140,20 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.version.outputs.VERSION }}
+
+      - name: Scan container image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3

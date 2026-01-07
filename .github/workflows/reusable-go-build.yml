@@ -1,0 +1,78 @@
+name: Reusable Go Build
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.23'
+      goos:
+        description: 'Target OS'
+        required: true
+        type: string
+      goarch:
+        description: 'Target architecture'
+        required: true
+        type: string
+      binary-name:
+        description: 'Name of the binary'
+        required: false
+        type: string
+        default: 'gitopsi'
+      main-path:
+        description: 'Path to main package'
+        required: false
+        type: string
+        default: './cmd/gitopsi'
+      ldflags:
+        description: 'Linker flags'
+        required: false
+        type: string
+        default: '-s -w'
+
+jobs:
+  build:
+    name: Build ${{ inputs.goos }}/${{ inputs.goarch }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ inputs.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Generate build info
+        id: info
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "COMMIT=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ inputs.goos }}
+          GOARCH: ${{ inputs.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          LDFLAGS="${{ inputs.ldflags }} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Version=${{ steps.info.outputs.VERSION }} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Commit=${{ steps.info.outputs.COMMIT }} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.BuildDate=${{ steps.info.outputs.BUILD_DATE }}"
+
+          output="bin/${{ inputs.binary-name }}-${{ inputs.goos }}-${{ inputs.goarch }}"
+          if [ "${{ inputs.goos }}" = "windows" ]; then
+            output="${output}.exe"
+          fi
+
+          go build -ldflags "${LDFLAGS}" -o "${output}" ${{ inputs.main-path }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.binary-name }}-${{ inputs.goos }}-${{ inputs.goarch }}
+          path: bin/${{ inputs.binary-name }}-*
+          retention-days: 7

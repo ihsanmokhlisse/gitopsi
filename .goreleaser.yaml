@@ -204,3 +204,27 @@ release:
     ---
 
     **Full Changelog**: https://github.com/ihsanmokhlisse/gitopsi/compare/v{{ .PreviousTag }}...v{{.Version}}
+
+# Release announcements (optional - requires webhook secrets)
+# Set DISCORD_WEBHOOK_ID and DISCORD_WEBHOOK_TOKEN for Discord
+# Set SLACK_WEBHOOK for Slack
+announce:
+  discord:
+    enabled: '{{ if index .Env "DISCORD_WEBHOOK_ID" }}true{{ else }}false{{ end }}'
+    message_template: |
+      **{{ .ProjectName }} {{ .Tag }}** has been released! 🚀
+
+      {{ .TagSubject }}
+
+      📦 **Download**: {{ .ReleaseURL }}
+      🐳 **Container**: `docker pull ghcr.io/ihsanmokhlisse/gitopsi:{{ .Version }}`
+
+  slack:
+    enabled: '{{ if index .Env "SLACK_WEBHOOK" }}true{{ else }}false{{ end }}'
+    message_template: |
+      *{{ .ProjectName }} {{ .Tag }}* has been released! :rocket:
+
+      {{ .TagSubject }}
+
+      :package: *Download*: {{ .ReleaseURL }}
+      :whale: *Container*: `docker pull ghcr.io/ihsanmokhlisse/gitopsi:{{ .Version }}`

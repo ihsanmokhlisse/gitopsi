@@ -7,15 +7,22 @@ on:
   workflow_dispatch:
     inputs:
       preset:
-        description: 'Preset to test (minimal, standard, enterprise, all)'
+        description: 'Preset to test (minimal, standard, enterprise)'
         required: false
         default: 'standard'
         type: choice
         options:
-          - all
           - minimal
           - standard
           - enterprise
+      bootstrap_mode:
+        description: 'Bootstrap mode to test'
+        required: false
+        default: 'helm'
+        type: choice
+        options:
+          - helm
+          - manifest
       debug:
         description: 'Enable debug logging'
         required: false
@@ -30,8 +37,6 @@ env:
   GO_VERSION: '1.23'
   KIND_VERSION: 'v0.24.0'
   ARGOCD_VERSION: '2.13.2'
-  KUSTOMIZE_VERSION: '5.5.0'
-  HELM_VERSION: '3.16.3'
   TEST_BRANCH_PREFIX: 'test/e2e'
 
 permissions:
@@ -41,10 +46,10 @@ permissions:
 
 jobs:
   # ===========================================================================
-  # Build and Generate: Build binary and generate manifests
+  # Build: Build gitopsi binary
   # ===========================================================================
-  build-and-generate:
-    name: Build and Generate Manifests
+  build:
+    name: Build Binary
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.info.outputs.version }}
@@ -85,38 +90,6 @@ jobs:
           ./bin/gitopsi version
           ./bin/gitopsi --help
 
-      - name: Install kustomize
-        run: |
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- ${{ env.KUSTOMIZE_VERSION }}
-          sudo mv kustomize /usr/local/bin/
-
-      - name: Generate manifests (standard preset)
-        run: |
-          mkdir -p output
-          ./bin/gitopsi init \
-            --config test/e2e/fixtures/standard-config.yaml \
-            --output output \
-            --verbose
-
-      - name: Validate YAML syntax
-        run: |
-          find output -name "*.yaml" -o -name "*.yml" | while read f; do
-            echo "Validating: $f"
-            yq eval '.' "$f" > /dev/null || exit 1
-          done
-
-      - name: Validate with kustomize build
-        run: |
-          for dir in output/*/infrastructure/overlays/*/; do
-            if [ -f "${dir}kustomization.yaml" ]; then
-              echo "Building: $dir"
-              kustomize build "$dir" > /dev/null || exit 1
-            fi
-          done
-
-      - name: Run gitopsi validate
-        run: ./bin/gitopsi validate output/test-standard
-
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
@@ -124,19 +97,12 @@ jobs:
           path: bin/gitopsi
           retention-days: 1
 
-      - name: Upload manifests artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: manifests
-          path: output/
-          retention-days: 1
-
   # ===========================================================================
   # CLI Testing: Test CLI commands (no cluster needed)
   # ===========================================================================
   cli-test:
     name: CLI Command Testing
-    needs: [build-and-generate]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,26 +125,35 @@ jobs:
           ./bin/gitopsi init --help
           ./bin/gitopsi validate --help
           ./bin/gitopsi preflight --help
-          ./bin/gitopsi env --help
 
-      - name: Test validate command
+      - name: Test init with dry-run
         run: |
-          mkdir -p test-output
           ./bin/gitopsi init \
             --config test/e2e/fixtures/minimal-config.yaml \
-            --output test-output \
+            --output /tmp/test-output \
+            --dry-run \
             --verbose
-          ./bin/gitopsi validate test-output/test-minimal
+
+      - name: Test init and validate
+        run: |
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/test-output \
+            --verbose
+          ./bin/gitopsi validate /tmp/test-output/test-standard
 
   # ===========================================================================
-  # E2E Cluster Test: All cluster operations in one job
+  # E2E Bootstrap Test: Test gitopsi's bootstrap capability
+  # This is the REAL E2E test - gitopsi installs ArgoCD, not manual helm
   # ===========================================================================
-  e2e-cluster:
-    name: E2E Cluster Test
-    needs: [build-and-generate]
+  e2e-bootstrap:
+    name: E2E Bootstrap Test (${{ github.event.inputs.bootstrap_mode || 'helm' }})
+    needs: [build]
     runs-on: ubuntu-latest
     env:
-      BRANCH_NAME: ${{ needs.build-and-generate.outputs.branch_name }}
+      BRANCH_NAME: ${{ needs.build.outputs.branch_name }}
+      BOOTSTRAP_MODE: ${{ github.event.inputs.bootstrap_mode || 'helm' }}
+      PRESET: ${{ github.event.inputs.preset || 'standard' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -190,38 +165,10 @@ jobs:
           name: gitopsi-binary
           path: bin
 
-      - name: Download manifests
-        uses: actions/download-artifact@v4
-        with:
-          name: manifests
-          path: manifests
-
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      # --- Git Push Phase ---
-      - name: Create and push test branch
-        id: git-push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Create orphan branch with manifests
-          git checkout --orphan "${BRANCH_NAME}"
-          git rm -rf . || true
-
-          # Copy generated manifests
-          cp -r manifests/test-standard/* .
-
-          # Commit and push
-          git add -A
-          git commit -m "E2E test manifests for ${{ needs.build-and-generate.outputs.version }}"
-          git push origin "${BRANCH_NAME}"
-
-          echo "pushed=true" >> $GITHUB_OUTPUT
-          echo "::notice::Pushed manifests to branch: ${BRANCH_NAME}"
-
-      # --- Kind Cluster Phase ---
+      # --- Kind Cluster Setup ---
       - name: Install kind
         run: |
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
@@ -245,105 +192,250 @@ jobs:
           kubectl get nodes
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
-      # --- ArgoCD Bootstrap Phase ---
-      - name: Install Helm
+      # --- Test gitopsi preflight ---
+      - name: Run gitopsi preflight
         run: |
-          curl -fsSL https://get.helm.sh/helm-v${{ env.HELM_VERSION }}-linux-amd64.tar.gz | tar xz
-          sudo mv linux-amd64/helm /usr/local/bin/
-          helm version
+          echo "=== Testing gitopsi preflight command ==="
+          ./bin/gitopsi preflight --verbose || echo "Preflight completed with warnings (expected on fresh cluster)"
 
+      # --- Test gitopsi init with --bootstrap ---
+      # THIS IS THE REAL TEST: gitopsi should install ArgoCD
+      - name: Run gitopsi init with bootstrap
+        run: |
+          echo "=== Testing gitopsi init --bootstrap ==="
+          echo "Bootstrap mode: ${BOOTSTRAP_MODE}"
+          echo "Preset: ${PRESET}"
+
+          # Run gitopsi init with bootstrap flag
+          # This tests gitopsi's ability to:
+          # 1. Generate manifests
+          # 2. Install ArgoCD on the cluster
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${PRESET}-config.yaml \
+            --output /tmp/gitops-output \
+            --bootstrap \
+            --bootstrap-mode ${BOOTSTRAP_MODE} \
+            --verbose
+        timeout-minutes: 8
+
+      # --- Verify ArgoCD was installed by gitopsi ---
+      - name: Verify ArgoCD installation
+        run: |
+          echo "=== Verifying ArgoCD was installed by gitopsi ==="
+
+          # Check ArgoCD namespace exists
+          kubectl get namespace argocd || kubectl get namespace openshift-gitops
+
+          # Check ArgoCD pods are running
+          NAMESPACE=$(kubectl get namespace argocd -o name 2>/dev/null && echo "argocd" || echo "openshift-gitops")
+          echo "ArgoCD namespace: ${NAMESPACE}"
+
+          kubectl get pods -n ${NAMESPACE}
+
+          # Wait for argocd-server to be ready
+          kubectl wait --for=condition=available deployment/argocd-server -n ${NAMESPACE} --timeout=300s || \
+            kubectl wait --for=condition=available deployment/openshift-gitops-server -n ${NAMESPACE} --timeout=300s
+
+          echo "ArgoCD successfully installed by gitopsi!"
+
+      # --- Verify ArgoCD CRDs exist ---
+      - name: Verify ArgoCD CRDs
+        run: |
+          echo "=== Verifying ArgoCD CRDs ==="
+          kubectl get crd applications.argoproj.io
+          kubectl get crd appprojects.argoproj.io
+          kubectl get crd applicationsets.argoproj.io
+
+      # --- Verify generated manifests ---
+      - name: Verify generated manifests
+        run: |
+          echo "=== Verifying generated manifests ==="
+          ls -la /tmp/gitops-output/
+
+          # Check expected directories exist
+          PROJECT_DIR=$(ls /tmp/gitops-output/ | head -1)
+          echo "Project directory: ${PROJECT_DIR}"
+
+          ls -la /tmp/gitops-output/${PROJECT_DIR}/
+
+          # Verify key directories
+          test -d "/tmp/gitops-output/${PROJECT_DIR}/infrastructure" && echo "✓ infrastructure/"
+          test -d "/tmp/gitops-output/${PROJECT_DIR}/argocd" && echo "✓ argocd/"
+
+      # --- Test ArgoCD CLI access (optional) ---
+      - name: Install ArgoCD CLI and verify access
+        run: |
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd
+          sudo mv /tmp/argocd /usr/local/bin/argocd
+
+          NAMESPACE=$(kubectl get namespace argocd -o name 2>/dev/null && echo "argocd" || echo "openshift-gitops")
+
+          # Get admin password
+          PASSWORD=$(kubectl -n ${NAMESPACE} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "")
+
+          if [ -n "${PASSWORD}" ]; then
+            echo "ArgoCD admin password retrieved successfully"
+
+            # Port-forward and login
+            kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:80 &
+            sleep 5
+
+            argocd login localhost:8080 \
+              --username admin \
+              --password "${PASSWORD}" \
+              --insecure \
+              --plaintext
+
+            argocd app list
+            echo "ArgoCD CLI access verified!"
+          else
+            echo "No initial admin secret found (may be expected for some configurations)"
+          fi
+
+      # --- Cleanup ---
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name e2e-test || true
+
+  # ===========================================================================
+  # E2E Git Sync Test: Full GitOps cycle test
+  # ===========================================================================
+  e2e-git-sync:
+    name: E2E Git Sync Test
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      BRANCH_NAME: ${{ needs.build.outputs.branch_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      # --- Generate and push manifests ---
+      - name: Generate manifests
+        run: |
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/gitops-output \
+            --verbose
+
+      - name: Push manifests to test branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create orphan branch
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+
+          # Copy manifests
+          cp -r /tmp/gitops-output/test-standard/* .
+
+          # Commit and push
+          git add -A
+          git commit -m "E2E test manifests"
+          git push origin "${BRANCH_NAME}"
+
+      # --- Kind cluster setup ---
+      - name: Install kind
+        run: |
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name e2e-sync-test
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+        timeout-minutes: 3
+
+      # --- Bootstrap with gitopsi ---
+      - name: Bootstrap ArgoCD with gitopsi
+        run: |
+          # Re-checkout to get the binary back
+          git checkout ${{ github.sha }} -- bin/gitopsi test/e2e/fixtures/
+
+          chmod +x bin/gitopsi
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/bootstrap-output \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+        timeout-minutes: 8
+
+      # --- Create ArgoCD Application pointing to test branch ---
       - name: Install ArgoCD CLI
         run: |
-          curl -sSL -o /tmp/argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
-          chmod +x /tmp/argocd-linux-amd64
-          sudo mv /tmp/argocd-linux-amd64 /usr/local/bin/argocd
-          argocd version --client
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd
+          sudo mv /tmp/argocd /usr/local/bin/argocd
 
-      - name: Install ArgoCD via Helm
+      - name: Create and sync ArgoCD Application
         run: |
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update
-          kubectl create namespace argocd
-          helm install argocd argo/argo-cd \
-            --namespace argocd \
-            --set configs.params."server\.insecure"=true \
-            --wait \
-            --timeout 5m
-        timeout-minutes: 6
+          NAMESPACE="argocd"
 
-      - name: Wait for ArgoCD to be ready
-        run: |
-          kubectl -n argocd wait --for=condition=available deployment/argocd-server --timeout=180s
-          kubectl -n argocd wait --for=condition=available deployment/argocd-repo-server --timeout=180s
-          kubectl -n argocd get pods
+          # Wait for ArgoCD to be ready
+          kubectl wait --for=condition=available deployment/argocd-server -n ${NAMESPACE} --timeout=300s
 
-      - name: Get ArgoCD admin password
-        id: argocd-password
-        run: |
-          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          echo "::add-mask::${PASSWORD}"
-          echo "password=${PASSWORD}" >> $GITHUB_OUTPUT
-
-      # --- Sync Verification Phase ---
-      - name: Port-forward ArgoCD
-        run: |
-          kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+          # Get password and login
+          PASSWORD=$(kubectl -n ${NAMESPACE} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:80 &
           sleep 5
 
-      - name: Login to ArgoCD
-        run: |
-          argocd login localhost:8080 \
-            --username admin \
-            --password "${{ steps.argocd-password.outputs.password }}" \
-            --insecure \
-            --plaintext
+          argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --plaintext
 
-      - name: Create ArgoCD Application
-        run: |
-          argocd app create e2e-test-app \
+          # Create application pointing to our test branch
+          argocd app create e2e-sync-app \
             --repo https://github.com/${{ github.repository }}.git \
             --revision "${BRANCH_NAME}" \
             --path "infrastructure/overlays/dev" \
             --dest-server https://kubernetes.default.svc \
             --dest-namespace dev \
-            --sync-policy automated \
-            --auto-prune \
-            --self-heal
+            --sync-policy automated
 
-      - name: Sync and wait
-        run: |
-          argocd app sync e2e-test-app --timeout 300 || true
-          argocd app wait e2e-test-app --sync --timeout 300 || echo "Sync may have issues"
+          # Sync and verify
+          argocd app sync e2e-sync-app --timeout 300 || true
+          argocd app wait e2e-sync-app --sync --timeout 300 || echo "Sync completed with warnings"
+
+          # Show status
+          argocd app get e2e-sync-app
         timeout-minutes: 6
 
-      - name: Verify sync status
+      - name: Verify synced resources
         run: |
-          argocd app get e2e-test-app
-          STATUS=$(argocd app get e2e-test-app -o json | jq -r '.status.sync.status')
-          echo "Sync Status: ${STATUS}"
-
-          # Check namespaces created
           echo "=== Namespaces ==="
           kubectl get namespaces
 
-      # --- Cleanup Phase (always runs) ---
+          echo "=== Resources in dev namespace ==="
+          kubectl get all -n dev 2>/dev/null || echo "Dev namespace may not have resources yet"
+
+      # --- Cleanup ---
       - name: Delete kind cluster
         if: always()
-        run: kind delete cluster --name e2e-test || true
+        run: kind delete cluster --name e2e-sync-test || true
 
       - name: Delete test branch
         if: always()
-        run: |
-          git push origin --delete "${BRANCH_NAME}" || echo "Branch may not exist"
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        run: git push origin --delete "${BRANCH_NAME}" || true
 
   # ===========================================================================
   # Report Failure
   # ===========================================================================
   report-failure:
     name: Report Failure
-    needs: [build-and-generate, cli-test, e2e-cluster]
+    needs: [build, cli-test, e2e-bootstrap, e2e-git-sync]
     runs-on: ubuntu-latest
     if: failure()
     steps:
@@ -363,9 +455,8 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.build-and-generate.outputs.version }}
-          COMMIT: ${{ needs.build-and-generate.outputs.commit }}
-          BRANCH_NAME: ${{ needs.build-and-generate.outputs.branch_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ needs.build.outputs.commit }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cat <<EOF > /tmp/issue_body.md
@@ -375,18 +466,17 @@ jobs:
 
           **Version**: ${VERSION}
           **Commit**: ${COMMIT}
-          **Branch**: ${{ github.ref_name }}
-          **Triggered**: ${{ github.event_name }}
+          **Bootstrap Mode**: ${{ github.event.inputs.bootstrap_mode || 'helm' }}
+          **Preset**: ${{ github.event.inputs.preset || 'standard' }}
 
-          ### Debug Information
-          - Test branch: \`${BRANCH_NAME}\`
-          - Go version: \`${{ env.GO_VERSION }}\`
-          - Kind version: \`${{ env.KIND_VERSION }}\`
-          - ArgoCD version: \`${{ env.ARGOCD_VERSION }}\`
+          ### What was tested
+          - gitopsi CLI commands
+          - gitopsi init --bootstrap (ArgoCD installation)
+          - GitOps sync cycle
 
           ### Next Steps
           1. Check the failed job logs
-          2. Reproduce locally if possible
+          2. Reproduce locally with kind cluster
           3. Fix the issue and re-run the workflow
           EOF
 

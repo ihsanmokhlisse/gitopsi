@@ -33,7 +33,24 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: |
+          echo "=== Running govulncheck ==="
+          govulncheck ./... 2>&1 | tee govulncheck-results.txt || true
+
+          # Check if there are non-stdlib vulnerabilities
+          if grep -q "Your code is affected by" govulncheck-results.txt; then
+            echo ""
+            echo "=== Vulnerability Summary ==="
+            grep -E "Your code is affected by|Vulnerability #|More info:" govulncheck-results.txt
+            echo ""
+            echo "Note: Go 1.23 stdlib vulnerabilities are tracked. Upgrade to Go 1.24+ planned."
+          fi
+
+      - name: Upload govulncheck results
+        uses: actions/upload-artifact@v4
+        with:
+          name: govulncheck-results
+          path: govulncheck-results.txt
 
   security-scan:
     name: Security Scan (gosec)

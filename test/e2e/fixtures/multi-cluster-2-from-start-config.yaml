@@ -25,5 +25,8 @@ docs:
   architecture: true
   onboarding: true
 
+git:
+  url: https://github.com/test/test-multi-cluster-2.git
+
 output:
   type: local

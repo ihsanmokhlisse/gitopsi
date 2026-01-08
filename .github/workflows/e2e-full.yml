@@ -1102,8 +1102,7 @@ jobs:
       - name: "Phase A - Step 4: Bootstrap ArgoCD"
         run: |
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
-          chmod +x bin/gitopsi
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 

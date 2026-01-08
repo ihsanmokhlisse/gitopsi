@@ -1,0 +1,29 @@
+project:
+  name: test-multi-cluster-2
+  description: Multi-cluster test with 2 clusters from the start
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+preset: standard
+topology: cluster-per-env
+
+environments:
+  - name: dev
+    cluster: https://dev.k8s.local:6443
+  - name: prod
+    cluster: https://prod.k8s.local:6443
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

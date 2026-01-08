@@ -1,0 +1,27 @@
+project:
+  name: test-single-cluster
+  description: Single cluster test for add-cluster day 2 operation
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+preset: standard
+topology: cluster-per-env
+
+environments:
+  - name: dev
+    cluster: https://kubernetes.default.svc
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

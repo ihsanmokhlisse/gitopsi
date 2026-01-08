@@ -2,9 +2,9 @@
 
 ## Overview
 
-The gitopsi E2E test suite validates the **complete gitopsi workflow** - from initial
-setup to day-2 operations. Every operation is performed through gitopsi, and ArgoCD
-syncs changes from Git.
+The gitopsi E2E test suite validates the **complete gitopsi workflow** - from manifest
+generation through ArgoCD sync and cluster-side validation. Every operation is performed
+through gitopsi, and ArgoCD syncs changes from Git.
 
 **Key Principle**: gitopsi manages manifests, ArgoCD syncs from Git. No direct
 kubectl/oc apply.
@@ -21,314 +21,172 @@ kubectl/oc apply.
 
 ---
 
-## Test Suite Architecture
+## Complete 12-Step Test Flow
+
+Each preset/configuration runs through a **complete 12-step flow**:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    COMPREHENSIVE E2E TEST SUITE                             │
+│              COMPLETE TEST FLOW (per preset/configuration)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Step 1: Generate Manifests                                                 │
+│  └── gitopsi init --config <preset-config>.yaml --output /tmp/output        │
+│                                                                             │
+│  Step 2: Create Kind Cluster                                                │
+│  └── kind create cluster --name e2e-<preset>                                │
+│                                                                             │
+│  Step 3: Push to Git                                                        │
+│  └── git push to test branch                                                │
+│                                                                             │
+│  Step 4: Bootstrap ArgoCD                                                   │
+│  └── gitopsi init --bootstrap --bootstrap-mode helm                         │
+│                                                                             │
+│  Step 5: Configure ArgoCD to sync from Git                                  │
+│  └── Create ArgoCD Application pointing to test branch                      │
+│                                                                             │
+│  Step 6: Verify Initial Sync                                                │
+│  └── Check ArgoCD status shows "Synced"                                     │
+│                                                                             │
+│  Step 7: Validate Initial Deployment on Cluster                             │
+│  └── kubectl get namespace dev (verify namespace exists)                    │
+│  └── kubectl get resourcequota -n dev (verify quota applied)                │
+│  └── kubectl get networkpolicy -n dev (verify netpol exists)                │
+│                                                                             │
+│  Step 8: Make Code Changes                                                  │
+│  └── Modify manifest (e.g., add label "e2e-test-change: true")              │
+│                                                                             │
+│  Step 9: Push Changes to Git                                                │
+│  └── git commit && git push                                                 │
+│                                                                             │
+│  Step 10: Verify ArgoCD Detects and Syncs Changes                           │
+│  └── Wait for ArgoCD to show "Synced" status                                │
+│                                                                             │
+│  Step 11: Validate Changes Applied on Cluster                               │
+│  └── kubectl get namespace dev -o yaml | grep "e2e-test-change: true"       │
+│  └── Verify the ACTUAL resource matches what we pushed                      │
+│                                                                             │
+│  Step 12: Cleanup                                                           │
+│  └── Delete kind cluster, delete test branch                                │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
-
-                              ┌─────────────┐
-                              │    BUILD    │
-                              │   Binary    │
-                              └──────┬──────┘
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌───────────────┐          ┌─────────────────┐          ┌─────────────────┐
-│   CLI TESTS   │          │ GENERATION TESTS│          │MARKETPLACE TESTS│
-│               │          │                 │          │                 │
-│ • version     │          │ Presets:        │          │ • list          │
-│ • help        │          │ • minimal       │          │ • search        │
-│ • all cmds    │          │ • standard      │          │ • info          │
-└───────────────┘          │ • enterprise    │          │ • validate      │
-                           │                 │          │ • install       │
-                           │ Scopes:         │          └─────────────────┘
-                           │ • infra-only    │
-                           │ • app-only      │
-                           │ • both          │
-                           │                 │
-                           │ Topologies:     │
-                           │ • namespace     │
-                           │ • cluster-per-env│
-                           │ • multi-cluster │
-                           └─────────────────┘
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌───────────────────┐      ┌─────────────────┐      ┌─────────────────────┐
-│  BOOTSTRAP TESTS  │      │   SYNC TESTS    │      │  DAY 2 OPS TESTS    │
-│                   │      │                 │      │                     │
-│ Bootstrap modes:  │      │ Full GitOps:    │      │ • Add cluster       │
-│ • helm            │      │ 1. Generate     │      │ • Add application   │
-│ • manifest        │      │ 2. Push to Git  │      │ • Add operator      │
-│                   │      │ 3. ArgoCD sync  │      │ • Promote app       │
-│ Verifies:         │      │ 4. Deploy       │      │ • Multi-repo        │
-│ • ArgoCD running  │      │ 5. Verify       │      │                     │
-│ • CRDs installed  │      │                 │      │ All via gitopsi     │
-│ • Manifests valid │      │                 │      │ Git push → sync     │
-└───────────────────┘      └─────────────────┘      └─────────────────────┘
-                                     │
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌───────────────────┐      ┌─────────────────┐      ┌─────────────────────┐
-│   ORG MGMT TESTS  │      │  MULTI-REPO     │      │   SUMMARY REPORT    │
-│                   │      │     TESTS       │      │                     │
-│ • org init        │      │                 │      │ • Pass/Fail table   │
-│ • team create     │      │ Repo patterns:  │      │ • Coverage details  │
-│ • team quota      │      │ • infra repo    │      │ • Run metadata      │
-│ • project create  │      │ • apps repo     │      │                     │
-│ • project add-env │      │ • app-per-repo  │      │ On failure:         │
-│                   │      │                 │      │ • Create GH issue   │
-└───────────────────┘      └─────────────────┘      └─────────────────────┘
 ```
 
 ---
 
-## Test Categories
+## Test Configurations
 
-### 1. CLI Tests
+### Preset Tests
 
-Basic CLI functionality validation.
+| Test | Config | What It Validates |
+|------|--------|-------------------|
+| Minimal Preset | `minimal-config.yaml` | Namespaces only, basic structure |
+| Standard Preset | `standard-config.yaml` | Full infra: namespaces, RBAC, netpol, quotas |
+| Enterprise Preset | `enterprise-config.yaml` | Enterprise features, monitoring dirs |
 
-| Test | Command | Purpose |
-|------|---------|---------|
-| Version | `gitopsi version` | Binary built correctly |
-| Help | `gitopsi --help` | All commands registered |
-| Init Help | `gitopsi init --help` | Init options documented |
-| Validate Help | `gitopsi validate --help` | Validate options documented |
-| Marketplace Help | `gitopsi marketplace --help` | Marketplace available |
-| Auth Help | `gitopsi auth --help` | Auth commands available |
-| Env Help | `gitopsi env --help` | Env commands available |
+### Scope Tests
 
-### 2. Generation Tests
+| Test | Config | What It Validates |
+|------|--------|-------------------|
+| Infra-Only | `infra-only-config.yaml` | No applications/, only infrastructure/ |
+| App-Only | `app-only-config.yaml` | No infrastructure/, only applications/ |
 
-Manifest generation without cluster (7 configurations):
+### Topology Tests
 
-| Config | Preset | Scope | Topology | Expected Dirs |
-|--------|--------|-------|----------|---------------|
-| minimal | minimal | both | namespace | infrastructure |
-| standard | standard | both | namespace | infrastructure, ArgoCD |
-| enterprise | enterprise | both | namespace | infrastructure, ArgoCD |
-| infra-only | standard | infrastructure | namespace | infrastructure |
-| app-only | standard | application | namespace | applications |
-| namespace-scope | standard | both | namespace-based | infrastructure, ArgoCD |
-| multi-cluster | standard | both | cluster-per-env | infrastructure, ArgoCD |
+| Test | Config | What It Validates |
+|------|--------|-------------------|
+| Namespace-Scope | `namespace-scope-config.yaml` | ArgoCD in namespace-scoped mode |
+| Multi-Cluster (2 from start) | `multi-cluster-2-from-start-config.yaml` | 2 clusters from day 1 |
+| Multi-Cluster (add later) | `single-cluster-config.yaml` | Day 2: add cluster via gitopsi |
 
-Each test:
+---
 
-1. Runs `gitopsi init --config <config>`
-2. Verifies expected directories exist
-3. Validates YAML syntax with yq
-4. Validates with kustomize build
-5. Runs `gitopsi validate`
+## Multi-Cluster Tests
 
-### 3. Bootstrap Tests
-
-Tests gitopsi's ability to install ArgoCD on a cluster (2 configurations):
-
-| Mode | Command | Verifies |
-|------|---------|----------|
-| Helm | `gitopsi init --bootstrap --bootstrap-mode helm` | ArgoCD installed via Helm |
-| Manifest | `gitopsi init --bootstrap --bootstrap-mode manifest` | ArgoCD installed via manifests |
-
-Each test:
-
-1. Creates kind cluster
-2. Runs `gitopsi preflight`
-3. Runs `gitopsi init --bootstrap`
-4. Verifies ArgoCD namespace exists
-5. Verifies ArgoCD pods are running
-6. Verifies ArgoCD CRDs installed
-7. Verifies generated manifests
-
-### 4. Sync Tests
-
-Full GitOps cycle - generate → push → sync:
+### Test 1: 2 Clusters from the Start
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SYNC TEST WORKFLOW                                  │
+│                    MULTI-CLUSTER TEST 1                                     │
+│              "Multi-cluster from the start"                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  Step 1: Generate Manifests                                                 │
-│  ─────────────────────────────                                              │
-│  gitopsi init --config standard-config.yaml --output /tmp/output            │
+│  Initial Setup: 1 ArgoCD managing 2 clusters from day 1                     │
 │                                                                             │
-│  Step 2: Push to Git                                                        │
-│  ───────────────────                                                        │
-│  git checkout --orphan test/e2e-<version>-<commit>                          │
-│  git add . && git commit && git push                                        │
+│  ┌──────────────┐         ┌──────────────┐         ┌──────────────┐        │
+│  │   ArgoCD     │────────►│  Cluster 1   │         │  Cluster 2   │        │
+│  │  (Hub)       │────────►│  (dev)       │         │  (prod)      │        │
+│  └──────────────┘         └──────────────┘         └──────────────┘        │
 │                                                                             │
-│  Step 3: Create Cluster                                                     │
-│  ─────────────────────                                                      │
-│  kind create cluster --name e2e-sync-test                                   │
-│                                                                             │
-│  Step 4: Bootstrap ArgoCD                                                   │
-│  ────────────────────────                                                   │
-│  gitopsi init --bootstrap --bootstrap-mode helm                             │
-│                                                                             │
-│  Step 5: Create ArgoCD Application                                          │
-│  ─────────────────────────────────                                          │
-│  argocd app create e2e-sync-app                                             │
-│    --repo https://github.com/<repo>.git                                     │
-│    --revision test/e2e-<version>-<commit>                                   │
-│    --path infrastructure/overlays/dev                                       │
-│    --sync-policy automated                                                  │
-│                                                                             │
-│  Step 6: Verify Sync                                                        │
-│  ────────────────────                                                       │
-│  argocd app sync e2e-sync-app                                               │
-│  argocd app wait e2e-sync-app --sync                                        │
-│  kubectl get namespaces (verify dev namespace created)                      │
-│                                                                             │
-│  Step 7: Cleanup                                                            │
-│  ───────────────                                                            │
-│  kind delete cluster                                                        │
-│  git push --delete origin test/e2e-<branch>                                 │
+│  Step 1: Create 2 kind clusters (dev + prod)                                │
+│  Step 2: gitopsi init --config multi-cluster-2-envs.yaml                    │
+│  Step 3: Push to Git                                                        │
+│  Step 4: Bootstrap ArgoCD on cluster 1 (hub)                                │
+│  Step 5: Register cluster 2 with ArgoCD                                     │
+│  Step 6: ArgoCD syncs to BOTH clusters                                      │
+│  Step 7: Validate resources exist on BOTH clusters                          │
+│  Step 8-12: Change, push, verify sync on correct cluster                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5. Day 2 Operations Tests
-
-Tests gitopsi's ability to manage resources after initial setup:
+### Test 2: Add Cluster Later (Day 2 Operation)
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      DAY 2 OPERATIONS TEST WORKFLOW                         │
+│                    MULTI-CLUSTER TEST 2                                     │
+│              "Add cluster later (Day 2 operation)"                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  Phase 1: Initial Setup                                                     │
-│  ──────────────────────                                                     │
-│  gitopsi init --bootstrap --bootstrap-mode helm                             │
-│  (Creates cluster with ArgoCD + initial manifests)                          │
-│                                                                             │
-│  Phase 2: Add New Cluster                                                   │
-│  ────────────────────────                                                   │
-│  gitopsi env add-cluster prod --url https://prod.k8s.local:6443             │
-│  git add . && git commit && git push                                        │
-│  → Verify ArgoCD can see new cluster                                        │
-│                                                                             │
-│  Phase 3: Add Application                                                   │
-│  ────────────────────────                                                   │
-│  gitopsi install nginx --env dev,staging                                    │
-│  git add . && git commit && git push                                        │
-│  → Verify ArgoCD syncs nginx application                                    │
-│                                                                             │
-│  Phase 4: Add Operator                                                      │
-│  ─────────────────────                                                      │
-│  gitopsi operator add prometheus-operator                                   │
-│  git add . && git commit && git push                                        │
-│  → Verify operator manifests generated                                      │
-│  → Verify ArgoCD syncs operator subscription                                │
-│                                                                             │
-│  Phase 5: Promote Application                                               │
-│  ───────────────────────────                                                │
-│  gitopsi promote nginx --from dev --to staging                              │
-│  git add . && git commit && git push                                        │
-│  → Verify staging now has nginx                                             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 6. Multi-Repo Tests
-
-Tests gitopsi's ability to manage multiple repositories:
-
-| Pattern | Description | Use Case |
-|---------|-------------|----------|
-| Mono-repo | All in one repo | Small teams, simple projects |
-| Infra + Apps | Separate repos for infra and apps | Medium teams, separation of concerns |
-| App-per-repo | Each app in its own repo | Large teams, microservices |
-
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      MULTI-REPO PATTERNS                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  Pattern 1: Mono-repo                                                       │
-│  ────────────────────                                                       │
-│  gitops-repo/                                                               │
-│  ├── infrastructure/                                                        │
-│  ├── applications/                                                          │
-│  └── argocd/                                                                │
-│                                                                             │
-│  Pattern 2: Infra + Apps separation                                         │
-│  ───────────────────────────────────                                        │
-│  gitops-infra-repo/           gitops-apps-repo/                             │
-│  ├── infrastructure/          ├── app1/                                     │
-│  ├── argocd/                  ├── app2/                                     │
-│  └── operators/               └── app3/                                     │
-│                                                                             │
-│  Pattern 3: App-per-repo                                                    │
-│  ───────────────────────                                                    │
-│  gitops-infra/    app1-repo/    app2-repo/    app3-repo/                    │
-│  └── infra...     └── manifests └── manifests └── manifests                 │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 7. Organization Management Tests
-
-Tests gitopsi's organization, team, and project management:
-
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    ORGANIZATION MANAGEMENT TEST                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  Step 1: Initialize Organization                                            │
-│  ───────────────────────────────                                            │
-│  gitopsi org init acme-corp --domain acme.com                               │
-│                                                                             │
-│  Step 2: Create Teams                                                       │
-│  ────────────────────                                                       │
-│  gitopsi team create frontend --owners frontend@acme.com                    │
-│  gitopsi team create backend --owners backend@acme.com                      │
-│  gitopsi team create platform --owners platform@acme.com                    │
-│                                                                             │
-│  Step 3: Set Team Quotas                                                    │
-│  ───────────────────────                                                    │
-│  gitopsi team set-quota frontend --cpu 50 --memory 100Gi                    │
-│  gitopsi team set-quota backend --cpu 100 --memory 200Gi                    │
-│                                                                             │
-│  Step 4: Create Projects                                                    │
-│  ───────────────────────                                                    │
-│  gitopsi project create web-app --team frontend                             │
-│  gitopsi project create api-service --team backend                          │
-│                                                                             │
-│  Step 5: Add Environments to Projects                                       │
+│  Phase A: Start with 1 cluster only                                         │
 │  ─────────────────────────────────────                                      │
-│  gitopsi project add-env web-app dev --team frontend                        │
-│  gitopsi project add-env web-app staging --team frontend                    │
-│  gitopsi project add-env web-app prod --team frontend                       │
+│  Step 1-7: Complete flow with single cluster                                │
 │                                                                             │
-│  Step 6: Verify Structure                                                   │
-│  ────────────────────────                                                   │
-│  gitopsi org show                                                           │
-│  gitopsi team list                                                          │
-│  gitopsi project list --team frontend                                       │
+│  Phase B: Add new cluster via gitopsi (Day 2)                               │
+│  ────────────────────────────────────────────                               │
+│  Step 8: Create 2nd kind cluster (prod)                                     │
+│  Step 9: gitopsi env add-cluster prod --url <cluster2-url>                  │
+│  Step 10: Push to Git                                                       │
+│  Step 11: Verify ArgoCD detects and manages new cluster                     │
+│  Step 12: Cleanup                                                           │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 8. Marketplace Tests
+---
 
-Tests pattern installation from marketplace:
+## Configuration-Specific Validation
 
-| Test | Command | Purpose |
-|------|---------|---------|
-| List | `gitopsi marketplace list` | List available patterns |
-| Categories | `gitopsi marketplace categories` | List categories |
-| Search | `gitopsi marketplace search monitoring` | Search patterns |
-| Info | `gitopsi marketplace info prometheus` | Get pattern details |
-| Validate | `gitopsi marketplace validate prometheus` | Validate pattern |
-| Install | `gitopsi install prometheus --env dev` | Install pattern |
+Each configuration validates different resources:
+
+| Configuration | Step 7 Validates | Step 8 Changes | Step 11 Validates |
+|---------------|------------------|----------------|-------------------|
+| Minimal | namespace exists | add label | label present |
+| Standard | ns + RBAC + netpol + quota | modify quota | quota updated |
+| Enterprise | all + enterprise dirs | add label | label present |
+| Infra-Only | infra exists, NO apps | modify RBAC | RBAC updated |
+| App-Only | apps exist, NO infra | change replicas | pods match |
+| Namespace-Scope | ArgoCD ns-scoped | modify config | still ns-scoped |
+| Multi-Cluster | both clusters | add to specific | only target updated |
+
+---
+
+## Test Fixtures
+
+Located in `test/e2e/fixtures/`:
+
+| File | Purpose |
+|------|---------|
+| `minimal-config.yaml` | Minimal preset (namespaces only) |
+| `standard-config.yaml` | Standard preset (full infra) |
+| `enterprise-config.yaml` | Enterprise preset |
+| `infra-only-config.yaml` | Infrastructure-only scope |
+| `app-only-config.yaml` | Application-only scope |
+| `namespace-scope-config.yaml` | Namespace-scoped ArgoCD |
+| `multi-cluster-config.yaml` | Multi-cluster topology |
+| `multi-cluster-2-from-start-config.yaml` | 2 clusters from day 1 |
+| `single-cluster-config.yaml` | Single cluster for day 2 test |
+| `day2-ops-config.yaml` | Day 2 operations test |
 
 ---
 
@@ -343,13 +201,17 @@ The E2E test suite runs automatically:
 
 ### Manual Trigger
 
-1. Go to Actions → E2E Full Test → Run workflow
+1. Go to Actions -> E2E Full Test -> Run workflow
 2. Select test suite:
    - `all` - Run all tests
-   - `generation` - Run only generation tests
-   - `bootstrap` - Run only bootstrap tests
-   - `sync` - Run only sync tests
-   - `marketplace` - Run only marketplace tests
+   - `minimal` - Minimal preset flow only
+   - `standard` - Standard preset flow only
+   - `enterprise` - Enterprise preset flow only
+   - `infra-only` - Infra-only scope flow only
+   - `app-only` - App-only scope flow only
+   - `namespace-scope` - Namespace-scope flow only
+   - `multi-cluster` - Both multi-cluster tests
+   - `marketplace` - Marketplace tests only
 3. Enable debug if needed
 
 ### Local Testing
@@ -358,35 +220,24 @@ The E2E test suite runs automatically:
 # Build binary
 go build -o bin/gitopsi ./cmd/gitopsi
 
-# Run generation tests
+# Run generation test
 ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test
 
-# Run with kind cluster
+# Run with kind cluster (full flow)
 kind create cluster --name e2e-test
 ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml \
   --output /tmp/test --bootstrap --bootstrap-mode helm
 
+# Verify resources
+kubectl get namespaces
+kubectl get all -n dev
+
+# Make a change
+yq eval '.metadata.labels["test"] = "true"' -i /tmp/test/*/infrastructure/base/namespaces/dev.yaml
+
 # Cleanup
 kind delete cluster --name e2e-test
 ```
-
----
-
-## Test Fixtures
-
-Located in `test/e2e/fixtures/`:
-
-| File | Purpose |
-|------|---------|
-| `minimal-config.yaml` | Minimal preset test |
-| `standard-config.yaml` | Standard preset test |
-| `enterprise-config.yaml` | Enterprise preset test |
-| `infra-only-config.yaml` | Infrastructure-only scope |
-| `app-only-config.yaml` | Application-only scope |
-| `namespace-scope-config.yaml` | Namespace-scoped ArgoCD |
-| `multi-cluster-config.yaml` | Multi-cluster topology |
-| `day2-ops-config.yaml` | Day 2 operations test |
-| `multi-repo-config.yaml` | Multi-repo test |
 
 ---
 
@@ -402,51 +253,36 @@ After each run, a summary report is generated with:
 **Commit:** abc1234
 **Date:** 2026-01-08T12:00:00Z
 
-## Test Results
+## Complete Flow Test Results
 
-| Test Suite | Status |
-|------------|--------|
-| Build | ✅ Passed |
-| CLI Tests | ✅ Passed |
-| Generation Tests | ✅ Passed |
-| Bootstrap Tests | ✅ Passed |
-| Sync Tests | ✅ Passed |
-| Day 2 Ops Tests | ✅ Passed |
-| Multi-Repo Tests | ✅ Passed |
-| Org Mgmt Tests | ✅ Passed |
-| Marketplace Tests | ✅ Passed |
+| Test Flow | Status | Description |
+|-----------|--------|-------------|
+| Build | ✅ | Binary compilation |
+| Minimal Preset | ✅ | 12-step flow: namespace only |
+| Standard Preset | ✅ | 12-step flow: full infra |
+| Enterprise Preset | ✅ | 12-step flow: enterprise features |
+| Infra-Only Scope | ✅ | 12-step flow: no applications |
+| App-Only Scope | ✅ | 12-step flow: apps only |
+| Namespace-Scope | ✅ | 12-step flow: ns-scoped ArgoCD |
+| Multi-Cluster (2 start) | ✅ | 2 clusters from day 1 |
+| Multi-Cluster (add later) | ✅ | Day 2: add cluster |
+| Marketplace | ✅ | Pattern management |
 
-## Test Coverage
+## 12-Step Flow Validated
 
-### Generation Tests
-- ✅ Minimal preset
-- ✅ Standard preset
-- ✅ Enterprise preset
-- ✅ Infrastructure-only scope
-- ✅ Application-only scope
-- ✅ Namespace-scope topology
-- ✅ Multi-cluster topology
-
-### Bootstrap Tests
-- ✅ Helm bootstrap mode
-- ✅ Manifest bootstrap mode
-
-### Day 2 Operations
-- ✅ Add cluster
-- ✅ Add application
-- ✅ Add operator
-- ✅ Promote application
-
-### Multi-Repo
-- ✅ Infra + apps separation
-- ✅ App-per-repo pattern
-
-### Organization Management
-- ✅ Organization init
-- ✅ Team create
-- ✅ Team quotas
-- ✅ Project create
-- ✅ Project environments
+Each preset/scope test validates:
+1. Generate manifests with gitopsi
+2. Create Kind cluster
+3. Push to Git
+4. Bootstrap ArgoCD
+5. Configure ArgoCD to sync from Git
+6. Verify initial sync
+7. Validate resources on cluster
+8. Make code changes
+9. Push changes to Git
+10. Verify ArgoCD syncs changes
+11. Validate changes applied on cluster
+12. Cleanup
 ```
 
 ---
@@ -455,7 +291,7 @@ After each run, a summary report is generated with:
 
 ### View Logs
 
-1. Go to Actions → [Failed Run]
+1. Go to Actions -> [Failed Run]
 2. Expand failed job
 3. Check step logs
 
@@ -467,6 +303,7 @@ After each run, a summary report is generated with:
 | ArgoCD not ready | Pod startup | Check pod logs |
 | Sync failure | Invalid manifests | Run kustomize build locally |
 | Branch push failed | Permissions | Check GitHub_TOKEN |
+| Cluster validation fails | Sync not complete | Increase sleep time |
 
 ### Reproduce Locally
 
@@ -478,9 +315,16 @@ export ARGOCD_VERSION=2.13.2
 # Create cluster
 kind create cluster --name e2e-test
 
-# Follow workflow steps
+# Follow the 12-step flow manually
 ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test
-./bin/gitopsi validate /tmp/test/test-standard
+./bin/gitopsi init --bootstrap --bootstrap-mode helm --output /tmp/bootstrap
+
+# Check ArgoCD
+kubectl get pods -n argocd
+kubectl wait --for=condition=available deployment/argocd-server -n argocd
+
+# Get password and login
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 ```
 
 ---
@@ -488,7 +332,9 @@ kind create cluster --name e2e-test
 ## Adding New Tests
 
 1. Create test fixture in `test/e2e/fixtures/`
-2. Add matrix entry in `.github/workflows/e2e-full.yml`
-3. Update documentation in `docs/E2E_TESTING.md`
-4. Run tests locally first
-5. Create PR with test changes
+2. Add new job in `.github/workflows/e2e-full.yml`
+3. Follow the 12-step flow pattern
+4. Add configuration-specific validation in Step 7 and Step 11
+5. Update this documentation
+6. Run tests locally first
+7. Create PR with test changes

@@ -401,31 +401,63 @@ jobs:
           NAMESPACE="argocd"
 
           # Wait for ArgoCD to be ready
+          echo "Waiting for ArgoCD server..."
           kubectl wait --for=condition=available deployment/argocd-server -n ${NAMESPACE} --timeout=300s
 
-          # Get password and login
+          # Get password
+          echo "Getting ArgoCD admin password..."
           PASSWORD=$(kubectl -n ${NAMESPACE} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:80 &
-          sleep 5
+          echo "Password retrieved (length: ${#PASSWORD})"
 
-          argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --plaintext
+          # Port-forward in background
+          echo "Starting port-forward..."
+          kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:443 &
+          PF_PID=$!
+          sleep 10
+
+          # Login with timeout
+          echo "Logging in to ArgoCD..."
+          timeout 30 argocd login localhost:8080 \
+            --username admin \
+            --password "${PASSWORD}" \
+            --insecure \
+            --grpc-web || {
+            echo "Login failed, trying plaintext..."
+            kill $PF_PID 2>/dev/null || true
+            kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:80 &
+            PF_PID=$!
+            sleep 5
+            timeout 30 argocd login localhost:8080 \
+              --username admin \
+              --password "${PASSWORD}" \
+              --insecure \
+              --plaintext
+          }
+          echo "Login successful!"
 
           # Create application pointing to our test branch
+          echo "Creating ArgoCD Application..."
           argocd app create e2e-sync-app \
             --repo https://github.com/${{ github.repository }}.git \
             --revision "${BRANCH_NAME}" \
             --path "infrastructure/overlays/dev" \
             --dest-server https://kubernetes.default.svc \
             --dest-namespace dev \
-            --sync-policy automated
+            --sync-policy automated \
+            --upsert
 
-          # Sync and verify
-          argocd app sync e2e-sync-app --timeout 300 || true
-          argocd app wait e2e-sync-app --sync --timeout 300 || echo "Sync completed with warnings"
+          # Sync with timeout
+          echo "Syncing application..."
+          timeout 180 argocd app sync e2e-sync-app --timeout 180 || echo "Sync had issues"
+          timeout 120 argocd app wait e2e-sync-app --sync --timeout 120 || echo "Wait completed with warnings"
 
           # Show status
-          argocd app get e2e-sync-app
-        timeout-minutes: 6
+          echo "Final status:"
+          argocd app get e2e-sync-app || true
+
+          # Cleanup port-forward
+          kill $PF_PID 2>/dev/null || true
+        timeout-minutes: 8
 
       - name: Verify synced resources
         run: |

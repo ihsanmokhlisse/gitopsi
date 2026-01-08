@@ -56,7 +56,7 @@ jobs:
       commit: ${{ steps.info.outputs.commit }}
       branch_name: ${{ steps.info.outputs.branch_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Generate build info
         id: info
@@ -75,7 +75,7 @@ jobs:
           echo "::notice::Test branch will be: ${BRANCH_NAME}"
 
       - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -91,7 +91,7 @@ jobs:
           ./bin/gitopsi --help
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gitopsi-binary
           path: bin/gitopsi
@@ -105,10 +105,10 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gitopsi-binary
           path: bin
@@ -155,12 +155,12 @@ jobs:
       BOOTSTRAP_MODE: ${{ github.event.inputs.bootstrap_mode || 'helm' }}
       PRESET: ${{ github.event.inputs.preset || 'standard' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gitopsi-binary
           path: bin
@@ -312,12 +312,12 @@ jobs:
     env:
       BRANCH_NAME: ${{ needs.build.outputs.branch_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gitopsi-binary
           path: bin
@@ -365,13 +365,13 @@ jobs:
 
       # --- Bootstrap with gitopsi ---
       - name: Download binary for bootstrap
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gitopsi-binary
           path: /tmp/gitopsi-bin
 
       - name: Checkout fixtures for bootstrap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           sparse-checkout: test/e2e/fixtures

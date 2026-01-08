@@ -131,6 +131,8 @@ jobs:
 
       # Step 1: Generate Manifests
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (Minimal Preset) ==="
           ./bin/gitopsi init \
@@ -171,6 +173,8 @@ jobs:
 
       # Step 4: Bootstrap ArgoCD
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 4: Bootstrap ArgoCD ==="
           # Re-checkout to get fixtures
@@ -221,8 +225,12 @@ jobs:
         run: |
           echo "=== Step 6: Verify Initial Sync ==="
 
-          # Sync and wait
-          argocd app sync e2e-minimal-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-minimal-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           argocd app wait e2e-minimal-app --sync --timeout 120 || true
 
           # Check status
@@ -238,20 +246,21 @@ jobs:
         run: |
           echo "=== Step 7: Validate Resources on Cluster ==="
 
-          # For minimal preset, only namespace should exist
-          echo "Checking dev namespace..."
-          kubectl get namespace dev || echo "Namespace not yet created"
+          # For minimal preset, namespace is prefixed with project name
+          NAMESPACE="${PROJECT_NAME}-dev"
+          echo "Checking namespace: ${NAMESPACE}..."
+          kubectl get namespace "${NAMESPACE}" || echo "Namespace not yet created"
 
           # Wait a bit for sync
           sleep 30
 
           # Verify namespace exists
-          if kubectl get namespace dev &>/dev/null; then
-            echo "✓ Namespace 'dev' exists on cluster"
-            kubectl get namespace dev -o yaml | head -20
+          if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
+            echo "✓ Namespace '${NAMESPACE}' exists on cluster"
+            kubectl get namespace "${NAMESPACE}" -o yaml | head -20
           else
-            echo "Creating namespace manually for validation..."
-            kubectl create namespace dev || true
+            echo "Namespace ${NAMESPACE} not found, checking all namespaces..."
+            kubectl get namespaces
           fi
 
           echo "Cluster resources:"
@@ -304,8 +313,12 @@ jobs:
           # Wait for sync
           sleep 30
 
-          # Sync again
-          argocd app sync e2e-minimal-app --timeout 120 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-minimal-app --timeout 120 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
 
           # Check status
           argocd app get e2e-minimal-app
@@ -315,15 +328,16 @@ jobs:
         run: |
           echo "=== Step 11: Validate Changes on Cluster ==="
 
-          # Check if the label was applied
-          LABEL=$(kubectl get namespace dev -o jsonpath='{.metadata.labels.e2e-test-change}' 2>/dev/null || echo "")
+          # Check if the label was applied (namespace is prefixed with project name)
+          NAMESPACE="${PROJECT_NAME}-dev"
+          LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.e2e-test-change}' 2>/dev/null || echo "")
 
           if [ "${LABEL}" = "true" ]; then
-            echo "✓ Label 'e2e-test-change=true' found on namespace"
+            echo "✓ Label 'e2e-test-change=true' found on namespace ${NAMESPACE}"
           else
             echo "Label not found (may not have synced yet)"
             echo "Current namespace labels:"
-            kubectl get namespace dev -o jsonpath='{.metadata.labels}' || true
+            kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' || true
           fi
 
           echo ""
@@ -375,6 +389,8 @@ jobs:
           sudo mv kustomize /usr/local/bin/
 
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (Standard Preset) ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -398,6 +414,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -422,7 +440,12 @@ jobs:
 
       - name: "Step 6: Verify Initial Sync"
         run: |
-          argocd app sync e2e-standard-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-standard-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           argocd app wait e2e-standard-app --sync --timeout 120 || true
           argocd app get e2e-standard-app
 
@@ -431,17 +454,19 @@ jobs:
           echo "=== Validating Standard Preset Resources ==="
           sleep 30
 
-          # Namespace
-          kubectl get namespace dev && echo "✓ Namespace dev exists"
+          # Namespace is prefixed with project name
+          NAMESPACE="${PROJECT_NAME}-dev"
+          echo "Checking namespace: ${NAMESPACE}..."
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
 
           # RBAC (standard has RBAC)
-          kubectl get rolebindings -n dev 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings yet"
+          kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings yet"
 
           # NetworkPolicies
-          kubectl get networkpolicies -n dev 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies yet"
+          kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies yet"
 
           # ResourceQuotas
-          kubectl get resourcequotas -n dev 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas yet"
+          kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas yet"
 
           echo "All namespaces:"
           kubectl get namespaces
@@ -470,14 +495,20 @@ jobs:
         run: |
           argocd app get e2e-standard-app --refresh || true
           sleep 30
-          argocd app sync e2e-standard-app --timeout 120 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-standard-app --timeout 120 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           argocd app get e2e-standard-app
 
       - name: "Step 11: Validate Changes on Cluster"
         run: |
           echo "=== Validating Changes ==="
-          kubectl get resourcequotas -n dev -o yaml 2>/dev/null || echo "No quota yet"
-          kubectl get namespace dev -o yaml | head -30
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get resourcequotas -n "${NAMESPACE}" -o yaml 2>/dev/null || echo "No quota yet"
+          kubectl get namespace "${NAMESPACE}" -o yaml | head -30
           echo "=== STANDARD PRESET TEST COMPLETED ==="
 
       - name: "Step 12: Cleanup"
@@ -522,6 +553,8 @@ jobs:
           sudo mv kustomize /usr/local/bin/
 
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (Enterprise Preset) ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -548,6 +581,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -571,13 +606,19 @@ jobs:
 
       - name: "Step 6-7: Verify Sync and Validate"
         run: |
-          argocd app sync e2e-enterprise-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-enterprise-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           argocd app wait e2e-enterprise-app --sync --timeout 120 || true
           sleep 30
 
           echo "=== Validating Enterprise Resources ==="
-          kubectl get namespace dev,staging,prod 2>/dev/null || echo "Some namespaces may not exist"
-          kubectl get all -n dev 2>/dev/null || true
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get namespace "${NAMESPACE}" 2>/dev/null && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
+          kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
 
       - name: "Steps 8-11: Make Changes and Validate"
         run: |
@@ -591,7 +632,12 @@ jobs:
           fi
 
           sleep 30
-          argocd app sync e2e-enterprise-app --timeout 120 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-enterprise-app --timeout 120 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
 
           echo "=== ENTERPRISE PRESET TEST COMPLETED ==="
 
@@ -635,6 +681,8 @@ jobs:
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (Infra-Only) ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -672,6 +720,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -694,17 +744,23 @@ jobs:
             --dest-namespace dev \
             --sync-policy automated --upsert
 
-          argocd app sync e2e-infra-only-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-infra-only-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           sleep 30
 
           echo "=== Validating Infra-Only Resources ==="
-          kubectl get namespace dev && echo "✓ Namespace exists"
-          kubectl get rolebindings -n dev && echo "✓ RBAC exists"
-          kubectl get networkpolicies -n dev 2>/dev/null && echo "✓ NetworkPolicies exist" || true
-          kubectl get resourcequotas -n dev 2>/dev/null && echo "✓ ResourceQuotas exist" || true
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
+          kubectl get rolebindings -n "${NAMESPACE}" && echo "✓ RBAC exists" || echo "No RBAC yet"
+          kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies exist" || true
+          kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas exist" || true
 
           # Verify NO deployments (app-only resources)
-          DEPLOYMENTS=$(kubectl get deployments -n dev 2>/dev/null | wc -l)
+          DEPLOYMENTS=$(kubectl get deployments -n "${NAMESPACE}" 2>/dev/null | wc -l)
           if [ "${DEPLOYMENTS}" -le 1 ]; then
             echo "✓ No application deployments (correct for infra-only)"
           fi
@@ -760,6 +816,8 @@ jobs:
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (App-Only) ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -791,6 +849,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -814,7 +874,12 @@ jobs:
               --dest-server https://kubernetes.default.svc \
               --dest-namespace dev \
               --sync-policy automated --upsert
-            argocd app sync e2e-app-only-app --timeout 180 || true
+            # Sync with retry logic
+            for i in 1 2 3; do
+              argocd app sync e2e-app-only-app --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
           else
             echo "No applications overlay found, testing structure only"
           fi
@@ -861,6 +926,8 @@ jobs:
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
       - name: "Step 1: Generate Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Manifests (Namespace-Scope) ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -884,6 +951,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -912,8 +981,16 @@ jobs:
             --dest-namespace dev \
             --sync-policy automated --upsert
 
-          argocd app sync e2e-ns-scope-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-ns-scope-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           sleep 30
+
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
 
           echo "=== NAMESPACE-SCOPE TEST COMPLETED ==="
 
@@ -957,6 +1034,8 @@ jobs:
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
       - name: "Step 1: Generate Manifests for 2 Clusters"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Step 1: Generate Multi-Cluster Manifests ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -993,6 +1072,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Step 4: Bootstrap ArgoCD on Hub Cluster"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           kubectl config use-context kind-e2e-mc-dev
 
@@ -1026,7 +1107,12 @@ jobs:
             --dest-namespace dev \
             --sync-policy automated --upsert
 
-          argocd app sync e2e-mc-dev-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-mc-dev-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
 
           echo "=== Validating Multi-Cluster Setup ==="
           argocd app list
@@ -1034,7 +1120,8 @@ jobs:
 
           echo "Resources on dev cluster:"
           kubectl config use-context kind-e2e-mc-dev
-          kubectl get namespaces
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || kubectl get namespaces
 
           echo "=== MULTI-CLUSTER (2 FROM START) TEST COMPLETED ==="
 
@@ -1080,6 +1167,8 @@ jobs:
 
       # Phase A: Start with single cluster
       - name: "Phase A - Step 1: Generate Single Cluster Manifests"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           echo "=== Phase A: Starting with Single Cluster ==="
           ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
@@ -1102,6 +1191,8 @@ jobs:
           git push origin "${BRANCH_NAME}"
 
       - name: "Phase A - Step 4: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
@@ -1124,11 +1215,17 @@ jobs:
             --dest-namespace dev \
             --sync-policy automated --upsert
 
-          argocd app sync e2e-single-app --timeout 180 || true
+          # Sync with retry logic
+          for i in 1 2 3; do
+            argocd app sync e2e-single-app --timeout 180 && break
+            echo "Sync retry $i/3..."
+            sleep 10
+          done
           sleep 30
 
           echo "✓ Phase A Complete: Single cluster working"
-          kubectl get namespaces
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || kubectl get namespaces
 
       # Phase B: Add new cluster via gitopsi
       - name: "Phase B - Step 8: Create Second Kind Cluster"

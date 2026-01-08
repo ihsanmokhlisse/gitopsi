@@ -226,8 +226,12 @@ jobs:
           # Check ArgoCD namespace exists
           kubectl get namespace argocd || kubectl get namespace openshift-gitops
 
-          # Check ArgoCD pods are running
-          NAMESPACE=$(kubectl get namespace argocd -o name 2>/dev/null && echo "argocd" || echo "openshift-gitops")
+          # Determine ArgoCD namespace
+          if kubectl get namespace argocd &>/dev/null; then
+            NAMESPACE="argocd"
+          else
+            NAMESPACE="openshift-gitops"
+          fi
           echo "ArgoCD namespace: ${NAMESPACE}"
 
           kubectl get pods -n ${NAMESPACE}
@@ -360,15 +364,25 @@ jobs:
         timeout-minutes: 3
 
       # --- Bootstrap with gitopsi ---
+      - name: Download binary for bootstrap
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: /tmp/gitopsi-bin
+
+      - name: Checkout fixtures for bootstrap
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: test/e2e/fixtures
+          path: fixtures-checkout
+
       - name: Bootstrap ArgoCD with gitopsi
         run: |
-          # Re-checkout to get the binary back
-          git checkout ${{ github.sha }} -- bin/gitopsi test/e2e/fixtures/
+          chmod +x /tmp/gitopsi-bin/gitopsi
 
-          chmod +x bin/gitopsi
-
-          ./bin/gitopsi init \
-            --config test/e2e/fixtures/standard-config.yaml \
+          /tmp/gitopsi-bin/gitopsi init \
+            --config fixtures-checkout/test/e2e/fixtures/standard-config.yaml \
             --output /tmp/bootstrap-output \
             --bootstrap \
             --bootstrap-mode helm \

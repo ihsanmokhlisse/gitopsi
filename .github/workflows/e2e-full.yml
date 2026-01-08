@@ -136,6 +136,7 @@ jobs:
           ./bin/gitopsi init \
             --config test/e2e/fixtures/${CONFIG_FILE} \
             --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
             --verbose
 
           echo "Generated structure:"
@@ -179,6 +180,7 @@ jobs:
           ./bin/gitopsi init \
             --config test/e2e/fixtures/${CONFIG_FILE} \
             --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
             --bootstrap \
             --bootstrap-mode helm \
             --verbose
@@ -375,7 +377,7 @@ jobs:
       - name: "Step 1: Generate Manifests"
         run: |
           echo "=== Step 1: Generate Manifests (Standard Preset) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
           find /tmp/output -type d | head -20
 
       - name: "Step 2: Create Kind Cluster"
@@ -399,7 +401,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Step 5: Configure ArgoCD"
@@ -522,7 +524,7 @@ jobs:
       - name: "Step 1: Generate Manifests"
         run: |
           echo "=== Step 1: Generate Manifests (Enterprise Preset) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
 
           # Enterprise should have additional directories
           echo "Enterprise structure:"
@@ -549,7 +551,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Step 5: Configure ArgoCD"
@@ -635,7 +637,7 @@ jobs:
       - name: "Step 1: Generate Manifests"
         run: |
           echo "=== Step 1: Generate Manifests (Infra-Only) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
 
           # Verify NO applications directory
           if [ -d "/tmp/output/${PROJECT_NAME}/applications" ]; then
@@ -673,7 +675,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Steps 5-7: Configure, Sync, Validate"
@@ -760,7 +762,7 @@ jobs:
       - name: "Step 1: Generate Manifests"
         run: |
           echo "=== Step 1: Generate Manifests (App-Only) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
 
           # Verify applications directory exists
           if [ -d "/tmp/output/${PROJECT_NAME}/applications" ]; then
@@ -792,7 +794,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Steps 5-11: Sync and Validate App-Only"
@@ -861,7 +863,7 @@ jobs:
       - name: "Step 1: Generate Manifests"
         run: |
           echo "=== Step 1: Generate Manifests (Namespace-Scope) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
           find /tmp/output -type d
 
       - name: "Step 2: Create Kind Cluster"
@@ -885,7 +887,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Steps 5-7: Configure and Validate Namespace-Scope"
@@ -957,7 +959,7 @@ jobs:
       - name: "Step 1: Generate Manifests for 2 Clusters"
         run: |
           echo "=== Step 1: Generate Multi-Cluster Manifests ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
 
           echo "Multi-cluster structure (should have cluster configs):"
           find /tmp/output -type f -name "*.yaml" | head -30
@@ -996,7 +998,7 @@ jobs:
 
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Step 5: Register Prod Cluster with ArgoCD"
@@ -1080,7 +1082,7 @@ jobs:
       - name: "Phase A - Step 1: Generate Single Cluster Manifests"
         run: |
           echo "=== Phase A: Starting with Single Cluster ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
 
       - name: "Phase A - Step 2: Create Single Kind Cluster"
         run: |
@@ -1103,7 +1105,7 @@ jobs:
         run: |
           git fetch origin ${{ github.sha }}
           git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
         timeout-minutes: 8
 
       - name: "Phase A - Steps 5-7: Sync and Validate Single Cluster"
@@ -1212,7 +1214,7 @@ jobs:
 
       - name: Generate project and test pattern install
         run: |
-          ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/project --verbose
+          ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/project --git-url https://github.com/${{ github.repository }}.git --verbose
           ./bin/gitopsi marketplace validate prometheus --project /tmp/project/test-standard || echo "Validation completed"
 
   # ===========================================================================

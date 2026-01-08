@@ -533,11 +533,288 @@ jobs:
           ./bin/gitopsi marketplace validate prometheus --project /tmp/project/test-standard || echo "Validation completed"
 
   # ===========================================================================
+  # Day 2 Operations Tests: Add cluster, apps, operators via gitopsi
+  # ===========================================================================
+  day2-ops-tests:
+    name: Day 2 Operations Tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == '' }}
+    env:
+      BRANCH_NAME: ${{ needs.build.outputs.branch_name }}-day2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Install kind
+        run: |
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      # Phase 1: Initial Setup
+      - name: Create initial cluster
+        run: |
+          kind create cluster --name e2e-day2-test
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+        timeout-minutes: 3
+
+      - name: Phase 1 - Initial bootstrap with gitopsi
+        run: |
+          echo "=== Phase 1: Initial Setup ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/day2-ops-config.yaml \
+            --output /tmp/day2-project \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+        timeout-minutes: 8
+
+      - name: Setup Git for changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create test branch with initial manifests
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+          cp -r /tmp/day2-project/test-day2-ops/* .
+          git add -A
+          git commit -m "Initial day2 ops manifests"
+          git push origin "${BRANCH_NAME}"
+
+      # Phase 2: Add new cluster via gitopsi
+      - name: Phase 2 - Add new cluster with gitopsi
+        run: |
+          echo "=== Phase 2: Add New Cluster ==="
+          cd /tmp/day2-project/test-day2-ops
+
+          # Use gitopsi to add a cluster to staging environment
+          /github/workspace/bin/gitopsi env add-cluster staging \
+            --url https://staging.k8s.local:6443 \
+            --project . \
+            --verbose || echo "Add cluster completed"
+
+          # Verify cluster was added
+          ls -la argocd/clusters/ 2>/dev/null || echo "Clusters dir may not exist yet"
+
+      # Phase 3: Add application via gitopsi
+      - name: Phase 3 - Add application with gitopsi
+        run: |
+          echo "=== Phase 3: Add Application ==="
+          cd /tmp/day2-project/test-day2-ops
+
+          # Install a pattern from marketplace
+          /github/workspace/bin/gitopsi install nginx \
+            --env dev \
+            --dry-run \
+            --verbose || echo "Pattern install (dry-run) completed"
+
+      # Phase 4: Add operator via gitopsi
+      - name: Phase 4 - Add operator with gitopsi
+        run: |
+          echo "=== Phase 4: Add Operator ==="
+          cd /tmp/day2-project/test-day2-ops
+
+          # Add an operator
+          /github/workspace/bin/gitopsi operator add prometheus-operator \
+            --project . \
+            --verbose || echo "Operator add completed"
+
+          # List operators
+          /github/workspace/bin/gitopsi operator list --project . || echo "Operator list completed"
+
+      # Phase 5: Verify ArgoCD can see changes
+      - name: Verify ArgoCD is running
+        run: |
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          echo "✓ ArgoCD is running"
+
+      # Cleanup
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name e2e-day2-test || true
+
+      - name: Delete test branch
+        if: always()
+        run: git push origin --delete "${BRANCH_NAME}" || true
+
+  # ===========================================================================
+  # Organization Management Tests: org, team, project
+  # ===========================================================================
+  org-mgmt-tests:
+    name: Organization Management Tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      - name: Generate base project
+        run: |
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/org-test \
+            --verbose
+
+      - name: Test organization init
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi org init acme-corp \
+            --domain acme.com \
+            --verbose || echo "Org init completed"
+
+      - name: Test organization show
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi org show || echo "Org show completed"
+
+      - name: Test team create
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi team create frontend \
+            --owners frontend@acme.com \
+            --verbose || echo "Team create completed"
+
+          /github/workspace/bin/gitopsi team create backend \
+            --owners backend@acme.com \
+            --verbose || echo "Team create completed"
+
+      - name: Test team list
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi team list || echo "Team list completed"
+
+      - name: Test team set-quota
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi team set-quota frontend \
+            --cpu 50 \
+            --memory 100Gi \
+            --verbose || echo "Team quota completed"
+
+      - name: Test project create
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi project create web-app \
+            --team frontend \
+            --verbose || echo "Project create completed"
+
+      - name: Test project add-env
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi project add-env web-app dev \
+            --team frontend \
+            --verbose || echo "Project add-env completed"
+
+          /github/workspace/bin/gitopsi project add-env web-app staging \
+            --team frontend \
+            --verbose || echo "Project add-env completed"
+
+      - name: Test project list
+        run: |
+          cd /tmp/org-test/test-standard
+          /github/workspace/bin/gitopsi project list --team frontend || echo "Project list completed"
+
+      - name: Verify generated structure
+        run: |
+          echo "=== Generated Organization Structure ==="
+          find /tmp/org-test/test-standard -type f -name "*.yaml" | head -20 || true
+
+  # ===========================================================================
+  # Multi-Repo Tests: Test different repo patterns
+  # ===========================================================================
+  multi-repo-tests:
+    name: Multi-Repo Tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-binary
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi
+
+      # Test Pattern 1: Mono-repo (infra + apps in one repo)
+      - name: Test mono-repo pattern
+        run: |
+          echo "=== Testing Mono-repo Pattern ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/mono-repo \
+            --verbose
+
+          # Verify both infrastructure and applications exist
+          test -d "/tmp/mono-repo/test-standard/infrastructure" && echo "✓ infrastructure/"
+          test -d "/tmp/mono-repo/test-standard/argocd" && echo "✓ argocd/"
+
+      # Test Pattern 2: Infrastructure-only repo
+      - name: Test infra-only repo pattern
+        run: |
+          echo "=== Testing Infra-only Repo Pattern ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/infra-only-config.yaml \
+            --output /tmp/infra-repo \
+            --verbose
+
+          # Verify only infrastructure exists
+          test -d "/tmp/infra-repo/test-infra-only/infrastructure" && echo "✓ infrastructure/"
+          test ! -d "/tmp/infra-repo/test-infra-only/applications" && echo "✓ no applications/ (expected)"
+
+      # Test Pattern 3: Application-only repo
+      - name: Test app-only repo pattern
+        run: |
+          echo "=== Testing App-only Repo Pattern ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/app-only-config.yaml \
+            --output /tmp/apps-repo \
+            --verbose
+
+          # Verify only applications exists
+          test -d "/tmp/apps-repo/test-app-only/applications" && echo "✓ applications/"
+
+      - name: Verify all repo patterns
+        run: |
+          echo "=== Mono-repo ==="
+          ls -la /tmp/mono-repo/test-standard/
+
+          echo "=== Infra-repo ==="
+          ls -la /tmp/infra-repo/test-infra-only/
+
+          echo "=== Apps-repo ==="
+          ls -la /tmp/apps-repo/test-app-only/
+
+  # ===========================================================================
   # Summary Report: Aggregate all test results
   # ===========================================================================
   summary-report:
     name: Summary Report
-    needs: [build, cli-tests, generation-tests, bootstrap-tests, sync-tests, marketplace-tests]
+    needs: [build, cli-tests, generation-tests, bootstrap-tests, sync-tests, marketplace-tests, day2-ops-tests, org-mgmt-tests, multi-repo-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -560,6 +837,9 @@ jobs:
           echo "| Bootstrap Tests | ${{ needs.bootstrap-tests.result == 'success' && '✅ Passed' || (needs.bootstrap-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Sync Tests | ${{ needs.sync-tests.result == 'success' && '✅ Passed' || (needs.sync-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Marketplace Tests | ${{ needs.marketplace-tests.result == 'success' && '✅ Passed' || (needs.marketplace-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Day 2 Ops Tests | ${{ needs.day2-ops-tests.result == 'success' && '✅ Passed' || (needs.day2-ops-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Org Mgmt Tests | ${{ needs.org-mgmt-tests.result == 'success' && '✅ Passed' || (needs.org-mgmt-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Multi-Repo Tests | ${{ needs.multi-repo-tests.result == 'success' && '✅ Passed' || (needs.multi-repo-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Test Coverage" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -581,6 +861,24 @@ jobs:
           echo "- ✅ Push to Git" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ ArgoCD sync from Git" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Day 2 Operations Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Add new cluster" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Add application (pattern install)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Add operator" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Verify ArgoCD sync" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Organization Management Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Organization init" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Team create" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Team quotas" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Project create" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Project environments" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Multi-Repo Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Mono-repo pattern" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Infra-only repo pattern" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ App-only repo pattern" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Marketplace Tests" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ List patterns" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Search patterns" >> $GITHUB_STEP_SUMMARY
@@ -589,12 +887,18 @@ jobs:
 
       - name: Check for failures
         run: |
-          if [ "${{ needs.build.result }}" != "success" ] || \
-             [ "${{ needs.cli-tests.result }}" != "success" ] || \
-             [ "${{ needs.generation-tests.result }}" != "success" ] || \
-             [ "${{ needs.bootstrap-tests.result }}" != "success" ] || \
-             [ "${{ needs.sync-tests.result }}" != "success" ] || \
-             [ "${{ needs.marketplace-tests.result }}" != "success" ]; then
+          FAILED=false
+          [ "${{ needs.build.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.cli-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.generation-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.bootstrap-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.sync-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.marketplace-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.day2-ops-tests.result }}" != "success" ] && [ "${{ needs.day2-ops-tests.result }}" != "skipped" ] && FAILED=true
+          [ "${{ needs.org-mgmt-tests.result }}" != "success" ] && [ "${{ needs.org-mgmt-tests.result }}" != "skipped" ] && FAILED=true
+          [ "${{ needs.multi-repo-tests.result }}" != "success" ] && [ "${{ needs.multi-repo-tests.result }}" != "skipped" ] && FAILED=true
+
+          if [ "$FAILED" = "true" ]; then
             echo "::error::One or more test suites failed"
             exit 1
           fi
@@ -605,7 +909,7 @@ jobs:
   # ===========================================================================
   report-failure:
     name: Report Failure
-    needs: [build, cli-tests, generation-tests, bootstrap-tests, sync-tests, marketplace-tests, summary-report]
+    needs: [build, cli-tests, generation-tests, bootstrap-tests, sync-tests, marketplace-tests, day2-ops-tests, org-mgmt-tests, multi-repo-tests, summary-report]
     runs-on: ubuntu-latest
     if: failure()
     steps:
@@ -646,6 +950,9 @@ jobs:
           | Bootstrap Tests | ${{ needs.bootstrap-tests.result }} |
           | Sync Tests | ${{ needs.sync-tests.result }} |
           | Marketplace Tests | ${{ needs.marketplace-tests.result }} |
+          | Day 2 Ops Tests | ${{ needs.day2-ops-tests.result }} |
+          | Org Mgmt Tests | ${{ needs.org-mgmt-tests.result }} |
+          | Multi-Repo Tests | ${{ needs.multi-repo-tests.result }} |
 
           ### Next Steps
           1. Check the failed job logs

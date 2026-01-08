@@ -1,0 +1,32 @@
+project:
+  name: test-day2-ops
+  description: Day 2 operations test project
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+preset: standard
+topology: cluster-per-env
+
+environments:
+  - name: dev
+    cluster: https://kubernetes.default.svc
+  - name: staging
+  - name: prod
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+git:
+  url: https://github.com/test/test-day2-ops.git
+
+output:
+  type: local

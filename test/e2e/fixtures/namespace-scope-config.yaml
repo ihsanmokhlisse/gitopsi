@@ -1,0 +1,34 @@
+project:
+  name: test-namespace-scope
+  description: Namespace-scoped ArgoCD test project
+
+platform: kubernetes
+scope: both
+gitops_tool: argocd
+preset: standard
+topology: namespace-based
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+bootstrap:
+  mode: helm
+  argocd:
+    namespace: argocd
+    scope: namespace
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

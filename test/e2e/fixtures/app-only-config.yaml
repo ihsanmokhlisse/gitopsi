@@ -1,0 +1,21 @@
+project:
+  name: test-app-only
+  description: Application-only test project
+
+platform: kubernetes
+scope: application
+gitops_tool: argocd
+preset: standard
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

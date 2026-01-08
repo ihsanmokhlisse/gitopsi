@@ -1,0 +1,27 @@
+project:
+  name: test-infra-only
+  description: Infrastructure-only test project
+
+platform: kubernetes
+scope: infrastructure
+gitops_tool: argocd
+preset: standard
+
+environments:
+  - name: dev
+  - name: staging
+  - name: prod
+
+infra:
+  namespaces: true
+  rbac: true
+  network_policies: true
+  resource_quotas: true
+
+docs:
+  readme: true
+  architecture: true
+  onboarding: true
+
+output:
+  type: local

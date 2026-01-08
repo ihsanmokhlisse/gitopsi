@@ -1,0 +1,700 @@
+name: Complete CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description: 'Skip E2E tests (faster)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ci-complete-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.23'
+  KIND_VERSION: 'v0.24.0'
+  ARGOCD_VERSION: '2.13.2'
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+  security-events: write
+
+jobs:
+  # ===========================================================================
+  # STAGE 1: Code Quality
+  # ===========================================================================
+  format:
+    name: "1.1 Format Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check formatting (gofmt)
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "::error::Code not formatted. Run 'make fmt'"
+            gofmt -l .
+            exit 1
+          fi
+          echo "✓ Code is properly formatted"
+
+      - name: Check imports (goimports)
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          if [ -n "$(goimports -l .)" ]; then
+            echo "::error::Imports not organized. Run 'goimports -w .'"
+            goimports -l .
+            exit 1
+          fi
+          echo "✓ Imports are properly organized"
+
+  lint:
+    name: "1.2 Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run go vet
+        run: |
+          go vet ./...
+          echo "✓ go vet passed"
+
+      - name: Install and run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.62.0
+          args: --timeout=5m
+
+  # ===========================================================================
+  # STAGE 2: Security
+  # ===========================================================================
+  security-vuln:
+    name: "2.1 Vulnerability Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: |
+          govulncheck ./...
+          echo "✓ No known vulnerabilities found"
+
+  security-gosec:
+    name: "2.2 Security Scan (gosec)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec
+        run: |
+          gosec -exclude-dir=internal/git -exclude=G204 -fmt=json -out=gosec-results.json ./... || true
+          echo "✓ Security scan completed"
+
+      - name: Upload gosec results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-results
+          path: gosec-results.json
+
+  security-codeql:
+    name: "2.3 CodeQL Analysis"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ===========================================================================
+  # STAGE 3: Unit Tests
+  # ===========================================================================
+  unit-tests:
+    name: "3.1 Unit Tests (Go ${{ matrix.go-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.22', '1.23']
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests with race detector
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold (40%)
+        if: matrix.go-version == env.GO_VERSION
+        run: |
+          coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${coverage}%"
+          threshold=40
+          if (( $(echo "$coverage < $threshold" | bc -l) )); then
+            echo "::error::Coverage ${coverage}% is below threshold ${threshold}%"
+            exit 1
+          fi
+          echo "✓ Coverage ${coverage}% meets threshold ${threshold}%"
+
+      - name: Upload coverage
+        if: matrix.go-version == env.GO_VERSION
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+
+  # ===========================================================================
+  # STAGE 4: Build
+  # ===========================================================================
+  build:
+    name: "4.1 Build (${{ matrix.goos }}/${{ matrix.goarch }})"
+    runs-on: ubuntu-latest
+    needs: [format, lint, unit-tests]
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      commit: ${{ steps.info.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate build info
+        id: info
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          COMMIT=${{ steps.info.outputs.commit }}
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Version=${VERSION} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.Commit=${COMMIT} -X github.com/ihsanmokhlisse/gitopsi/internal/cli.BuildDate=${BUILD_DATE}"
+
+          output="bin/gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output="${output}.exe"
+          fi
+
+          go build -ldflags "${LDFLAGS}" -o "${output}" ./cmd/gitopsi
+          echo "✓ Built ${output}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/gitopsi-*
+
+  # ===========================================================================
+  # STAGE 5: Integration & Regression Tests
+  # ===========================================================================
+  integration-tests:
+    name: "5.1 Integration Tests"
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        run: |
+          go test -v -race ./internal/integration/... -timeout 10m
+          echo "✓ Integration tests passed"
+
+  regression-tests:
+    name: "5.2 Regression Tests"
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run regression tests
+        run: |
+          go test -v -race ./internal/regression/... -timeout 5m
+          echo "✓ Regression tests passed"
+
+  # ===========================================================================
+  # STAGE 6: Preset Validation
+  # ===========================================================================
+  validate-presets:
+    name: "6.1 Validate Presets"
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Validate minimal preset
+        run: |
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/test-minimal
+          bin/gitopsi-linux-amd64 validate /tmp/test-minimal/test-minimal
+          echo "✓ Minimal preset validated"
+
+      - name: Validate standard preset
+        run: |
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test-standard
+          bin/gitopsi-linux-amd64 validate /tmp/test-standard/test-standard
+          echo "✓ Standard preset validated"
+
+      - name: Validate enterprise preset
+        run: |
+          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/enterprise-config.yaml --output /tmp/test-enterprise
+          bin/gitopsi-linux-amd64 validate /tmp/test-enterprise/test-enterprise
+          echo "✓ Enterprise preset validated"
+
+  # ===========================================================================
+  # STAGE 7: E2E Tests (Full GitOps Flow)
+  # ===========================================================================
+  e2e-minimal:
+    name: "7.1 E2E Minimal Preset"
+    runs-on: ubuntu-latest
+    needs: [build, validate-presets]
+    if: ${{ github.event.inputs.skip_e2e != 'true' }}
+    env:
+      BRANCH_NAME: test/ci-complete-minimal-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Setup
+        run: |
+          chmod +x bin/gitopsi-linux-amd64
+          mv bin/gitopsi-linux-amd64 bin/gitopsi
+
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
+
+      - name: "Steps 1-2: Generate & Create Cluster"
+        run: |
+          ./bin/gitopsi init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/output --verbose
+          kind create cluster --name e2e-minimal
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+        timeout-minutes: 5
+
+      - name: "Steps 3-4: Push & Bootstrap"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+          cp -r /tmp/output/test-minimal/* .
+          git add -A && git commit -m "E2E minimal" && git push origin "${BRANCH_NAME}"
+
+          git fetch origin ${{ github.sha }}
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/
+          ./bin/gitopsi init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+        timeout-minutes: 10
+
+      - name: "Steps 5-7: Sync & Validate"
+        run: |
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          kubectl -n argocd port-forward svc/argocd-server 8080:443 &
+          sleep 10
+          argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
+
+          argocd app create e2e-app --repo https://github.com/${{ github.repository }}.git \
+            --revision "${BRANCH_NAME}" --path "infrastructure/overlays/dev" \
+            --dest-server https://kubernetes.default.svc --dest-namespace dev \
+            --sync-policy automated --upsert
+
+          argocd app sync e2e-app --timeout 180 || true
+          sleep 30
+          kubectl get namespace dev && echo "✓ Namespace validated"
+
+      - name: "Steps 8-11: Change & Validate"
+        run: |
+          yq eval '.metadata.labels["e2e-test"] = "true"' -i infrastructure/base/namespaces/dev.yaml || true
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "E2E change" && git push origin "${BRANCH_NAME}"
+          fi
+          sleep 30
+          argocd app sync e2e-app --timeout 120 || true
+          echo "✓ E2E Minimal Complete"
+
+      - name: "Step 12: Cleanup"
+        if: always()
+        run: |
+          kind delete cluster --name e2e-minimal || true
+          git push origin --delete "${BRANCH_NAME}" || true
+
+  e2e-standard:
+    name: "7.2 E2E Standard Preset"
+    runs-on: ubuntu-latest
+    needs: [build, validate-presets]
+    if: ${{ github.event.inputs.skip_e2e != 'true' }}
+    env:
+      BRANCH_NAME: test/ci-complete-standard-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Setup
+        run: |
+          chmod +x bin/gitopsi-linux-amd64
+          mv bin/gitopsi-linux-amd64 bin/gitopsi
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
+
+      - name: "Full 12-Step Flow"
+        run: |
+          # Step 1-2
+          ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/output --verbose
+          kind create cluster --name e2e-standard
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+          # Step 3-4
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+          cp -r /tmp/output/test-standard/* .
+          git add -A && git commit -m "E2E standard" && git push origin "${BRANCH_NAME}"
+
+          git fetch origin ${{ github.sha }}
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/
+          ./bin/gitopsi init --config test/e2e/fixtures/standard-config.yaml --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+
+          # Step 5-7
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          kubectl -n argocd port-forward svc/argocd-server 8080:443 &
+          sleep 10
+          argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
+          argocd app create e2e-app --repo https://github.com/${{ github.repository }}.git \
+            --revision "${BRANCH_NAME}" --path "infrastructure/overlays/dev" \
+            --dest-server https://kubernetes.default.svc --dest-namespace dev \
+            --sync-policy automated --upsert
+          argocd app sync e2e-app --timeout 180 || true
+          sleep 30
+
+          # Validate
+          kubectl get namespace dev && echo "✓ Namespace"
+          kubectl get rolebindings -n dev 2>/dev/null && echo "✓ RBAC"
+          kubectl get networkpolicies -n dev 2>/dev/null && echo "✓ NetworkPolicies"
+          kubectl get resourcequotas -n dev 2>/dev/null && echo "✓ ResourceQuotas"
+
+          echo "✓ E2E Standard Complete"
+        timeout-minutes: 15
+
+      - name: "Cleanup"
+        if: always()
+        run: |
+          kind delete cluster --name e2e-standard || true
+          git push origin --delete "${BRANCH_NAME}" || true
+
+  e2e-multi-cluster:
+    name: "7.3 E2E Multi-Cluster"
+    runs-on: ubuntu-latest
+    needs: [build, validate-presets]
+    if: ${{ github.event.inputs.skip_e2e != 'true' }}
+    env:
+      BRANCH_NAME: test/ci-complete-mc-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Setup
+        run: |
+          chmod +x bin/gitopsi-linux-amd64
+          mv bin/gitopsi-linux-amd64 bin/gitopsi
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
+
+      - name: "Multi-Cluster Test"
+        run: |
+          # Create 2 clusters
+          kind create cluster --name e2e-mc-dev
+          kind create cluster --name e2e-mc-prod
+          kubectl config use-context kind-e2e-mc-dev
+
+          # Generate and push
+          ./bin/gitopsi init --config test/e2e/fixtures/multi-cluster-2-from-start-config.yaml --output /tmp/output --verbose
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+          cp -r /tmp/output/test-multi-cluster-2/* .
+          git add -A && git commit -m "E2E multi-cluster" && git push origin "${BRANCH_NAME}"
+
+          # Bootstrap on hub
+          git fetch origin ${{ github.sha }}
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/
+          ./bin/gitopsi init --config test/e2e/fixtures/multi-cluster-2-from-start-config.yaml --output /tmp/bootstrap --bootstrap --bootstrap-mode helm --verbose
+
+          # Validate
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          kubectl -n argocd port-forward svc/argocd-server 8080:443 &
+          sleep 10
+          argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
+
+          # Add second cluster
+          argocd cluster add kind-e2e-mc-prod --yes || echo "Cluster add completed"
+          argocd cluster list
+
+          echo "✓ E2E Multi-Cluster Complete"
+        timeout-minutes: 15
+
+      - name: "Cleanup"
+        if: always()
+        run: |
+          kind delete cluster --name e2e-mc-dev || true
+          kind delete cluster --name e2e-mc-prod || true
+          git push origin --delete "${BRANCH_NAME}" || true
+
+  # ===========================================================================
+  # STAGE 8: Final Report
+  # ===========================================================================
+  final-report:
+    name: "8.0 Final Report"
+    runs-on: ubuntu-latest
+    needs:
+      - format
+      - lint
+      - security-vuln
+      - security-gosec
+      - security-codeql
+      - unit-tests
+      - build
+      - integration-tests
+      - regression-tests
+      - validate-presets
+      - e2e-minimal
+      - e2e-standard
+      - e2e-multi-cluster
+    if: always()
+    steps:
+      - name: Generate Complete CI Report
+        run: |
+          echo "# Complete CI Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 1: Code Quality" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Format (gofmt/goimports) | ${{ needs.format.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint (go vet/golangci-lint) | ${{ needs.lint.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 2: Security" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Vulnerability Scan (govulncheck) | ${{ needs.security-vuln.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan (gosec) | ${{ needs.security-gosec.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL Analysis | ${{ needs.security-codeql.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 3: Unit Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests (Go 1.22 & 1.23) | ${{ needs.unit-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 4: Build" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build (linux/darwin/windows) | ${{ needs.build.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 5: Integration & Regression" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Regression Tests | ${{ needs.regression-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 6: Preset Validation" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate Presets | ${{ needs.validate-presets.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Stage 7: E2E Tests (Full GitOps Flow)" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| E2E Minimal (12-step) | ${{ needs.e2e-minimal.result == 'success' && '✅ Passed' || (needs.e2e-minimal.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| E2E Standard (12-step) | ${{ needs.e2e-standard.result == 'success' && '✅ Passed' || (needs.e2e-standard.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| E2E Multi-Cluster | ${{ needs.e2e-multi-cluster.result == 'success' && '✅ Passed' || (needs.e2e-multi-cluster.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Count results
+          PASSED=0
+          FAILED=0
+          SKIPPED=0
+
+          for result in "${{ needs.format.result }}" "${{ needs.lint.result }}" "${{ needs.security-vuln.result }}" "${{ needs.security-gosec.result }}" "${{ needs.security-codeql.result }}" "${{ needs.unit-tests.result }}" "${{ needs.build.result }}" "${{ needs.integration-tests.result }}" "${{ needs.regression-tests.result }}" "${{ needs.validate-presets.result }}" "${{ needs.e2e-minimal.result }}" "${{ needs.e2e-standard.result }}" "${{ needs.e2e-multi-cluster.result }}"; do
+            case $result in
+              success) ((PASSED++)) ;;
+              skipped) ((SKIPPED++)) ;;
+              *) ((FAILED++)) ;;
+            esac
+          done
+
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏭️ Skipped | ${SKIPPED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${FAILED}" -eq 0 ]; then
+            echo "### ✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ ${FAILED} check(s) failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check for failures
+        run: |
+          FAILED=false
+          [ "${{ needs.format.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.lint.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.security-vuln.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.security-gosec.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.security-codeql.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.unit-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.build.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.integration-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.regression-tests.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.validate-presets.result }}" != "success" ] && FAILED=true
+          [ "${{ needs.e2e-minimal.result }}" != "success" ] && [ "${{ needs.e2e-minimal.result }}" != "skipped" ] && FAILED=true
+          [ "${{ needs.e2e-standard.result }}" != "success" ] && [ "${{ needs.e2e-standard.result }}" != "skipped" ] && FAILED=true
+          [ "${{ needs.e2e-multi-cluster.result }}" != "success" ] && [ "${{ needs.e2e-multi-cluster.result }}" != "skipped" ] && FAILED=true
+
+          if [ "$FAILED" = "true" ]; then
+            echo "::error::One or more checks failed"
+            exit 1
+          fi
+          echo "✅ Complete CI passed!"

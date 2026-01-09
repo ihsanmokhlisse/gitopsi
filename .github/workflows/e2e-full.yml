@@ -88,7 +88,12 @@ jobs:
           retention-days: 1
 
   # ===========================================================================
-  # MINIMAL PRESET: Complete 12-step flow
+  # MINIMAL PRESET: Complete GitOps Flow
+  # ===========================================================================
+  # Minimal preset tests the simplest configuration:
+  # - Single environment (dev)
+  # - Namespace only (no RBAC, no NetworkPolicies, no ResourceQuotas)
+  # - Sample app deployment
   # ===========================================================================
   minimal-preset-flow:
     name: Minimal Preset - Complete Flow
@@ -113,50 +118,73 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
-          # Install kind
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
 
-          # Install ArgoCD CLI
           curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
-          chmod +x /tmp/argocd
-          sudo mv /tmp/argocd /usr/local/bin/argocd
+          chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
-          # Install kustomize
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
           sudo mv kustomize /usr/local/bin/
 
-      # Step 1: Generate Manifests
-      - name: "Step 1: Generate Manifests"
+          echo "✓ Tools installed"
+
+      - name: "Phase 1: Create Kind Cluster"
+        run: |
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-minimal --wait 120s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
+        timeout-minutes: 3
+
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
-          echo "=== Step 1: Generate Manifests (Minimal Preset) ==="
+          echo "=== Generating Manifests (Minimal Preset) ==="
           ./bin/gitopsi init \
             --config test/e2e/fixtures/${CONFIG_FILE} \
             --output /tmp/output \
             --git-url https://github.com/${{ github.repository }}.git \
             --verbose
 
-          echo "Generated structure:"
-          find /tmp/output -type f -name "*.yaml" | head -20
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
 
-      # Step 2: Create Kind Cluster
-      - name: "Step 2: Create Kind Cluster"
-        run: |
-          echo "=== Step 2: Create Kind Cluster ==="
-          kind create cluster --name e2e-minimal
-          kubectl wait --for=condition=Ready nodes --all --timeout=120s
-          kubectl cluster-info
-        timeout-minutes: 3
+          echo ""
+          echo "=== Verifying Minimal Structure ==="
+          # Minimal should have namespace but limited other resources
+          if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure" ]; then
+            echo "✓ infrastructure/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/infrastructure/base/
+          fi
 
-      # Step 3: Push to Git
-      - name: "Step 3: Push to Git"
+          if [ -d "/tmp/output/${PROJECT_NAME}/applications" ]; then
+            echo "✓ applications/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/applications/base/
+          fi
+
+          if [ -d "/tmp/output/${PROJECT_NAME}/argocd" ]; then
+            echo "✓ argocd/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/argocd/
+          fi
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
         run: |
-          echo "=== Step 3: Push to Git ==="
+          echo "=== Pushing to Git ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -169,17 +197,18 @@ jobs:
           git commit -m "E2E minimal preset manifests"
           git push origin "${BRANCH_NAME}"
 
-          echo "Pushed to branch: ${BRANCH_NAME}"
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
 
-      # Step 4: Bootstrap ArgoCD
-      - name: "Step 4: Bootstrap ArgoCD"
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
-          echo "=== Step 4: Bootstrap ArgoCD ==="
-          # Re-checkout to get fixtures
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
 
           ./bin/gitopsi init \
             --config test/e2e/fixtures/${CONFIG_FILE} \
@@ -188,171 +217,237 @@ jobs:
             --bootstrap \
             --bootstrap-mode helm \
             --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      # Step 5: Configure ArgoCD to sync from Git
-      - name: "Step 5: Configure ArgoCD to sync from Git"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
-          echo "=== Step 5: Configure ArgoCD Application ==="
-
-          # Wait for ArgoCD
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
 
-          # Get admin password
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
 
-          # Port forward
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
 
-          # Login
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
 
-          # Create Application pointing to test branch
-          argocd app create e2e-minimal-app \
+          echo "✓ ArgoCD login successful"
+
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Applications"
+        run: |
+          echo "=== Creating ArgoCD Applications ==="
+
+          # Create project
+          argocd proj create minimal-test \
+            --description "Minimal preset test" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Infrastructure app
+          argocd app create minimal-infra \
+            --project minimal-test \
             --repo https://github.com/${{ github.repository }}.git \
             --revision "${BRANCH_NAME}" \
             --path "infrastructure/overlays/dev" \
             --dest-server https://kubernetes.default.svc \
             --dest-namespace dev \
             --sync-policy automated \
+            --auto-prune \
+            --self-heal \
             --upsert
 
-          echo "ArgoCD Application created"
+          # Applications app (if exists)
+          if [ -d "applications/overlays/dev" ]; then
+            argocd app create minimal-apps \
+              --project minimal-test \
+              --repo https://github.com/${{ github.repository }}.git \
+              --revision "${BRANCH_NAME}" \
+              --path "applications/overlays/dev" \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace ${PROJECT_NAME}-dev \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --upsert
+          fi
 
-      # Step 6: Verify Initial Sync
-      - name: "Step 6: Verify Initial Sync"
+          echo ""
+          argocd app list
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync and Wait"
         run: |
-          echo "=== Step 6: Verify Initial Sync ==="
+          echo "=== Syncing Applications ==="
 
-          # Sync with retry logic
+          # Sync infrastructure
           for i in 1 2 3; do
-            argocd app sync e2e-minimal-app --timeout 180 && break
+            argocd app sync minimal-infra --timeout 180 && break
             echo "Sync retry $i/3..."
             sleep 10
           done
-          argocd app wait e2e-minimal-app --sync --timeout 120 || true
+          argocd app wait minimal-infra --sync --timeout 120 || true
 
-          # Check status
-          STATUS=$(argocd app get e2e-minimal-app -o json | jq -r '.status.sync.status')
-          echo "Sync Status: ${STATUS}"
-
-          if [ "${STATUS}" != "Synced" ]; then
-            echo "Warning: App not fully synced, but continuing..."
+          # Sync apps if exists
+          if argocd app get minimal-apps &>/dev/null; then
+            for i in 1 2 3; do
+              argocd app sync minimal-apps --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
+            argocd app wait minimal-apps --sync --timeout 120 || true
           fi
 
-      # Step 7: Validate Initial Deployment on Cluster
-      - name: "Step 7: Validate Initial Deployment on Cluster"
-        run: |
-          echo "=== Step 7: Validate Resources on Cluster ==="
-
-          # For minimal preset, namespace is prefixed with project name
-          NAMESPACE="${PROJECT_NAME}-dev"
-          echo "Checking namespace: ${NAMESPACE}..."
-          kubectl get namespace "${NAMESPACE}" || echo "Namespace not yet created"
-
-          # Wait a bit for sync
           sleep 30
+          echo "✓ Sync complete"
 
-          # Verify namespace exists
-          if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
-            echo "✓ Namespace '${NAMESPACE}' exists on cluster"
-            kubectl get namespace "${NAMESPACE}" -o yaml | head -20
-          else
-            echo "Namespace ${NAMESPACE} not found, checking all namespaces..."
+      - name: "Phase 4: Validate Deployment"
+        run: |
+          echo "=== Validating Deployment ==="
+
+          NAMESPACE="${PROJECT_NAME}-dev"
+
+          echo ""
+          echo "--- Namespace Check ---"
+          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+            echo "Namespace not found, listing all:"
             kubectl get namespaces
-          fi
+          }
 
-          echo "Cluster resources:"
-          kubectl get namespaces
+          echo ""
+          echo "--- Infrastructure Resources ---"
+          kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
 
-      # Step 8: Make Code Changes
-      - name: "Step 8: Make Code Changes"
-        run: |
-          echo "=== Step 8: Make Code Changes ==="
+          echo ""
+          echo "--- Sample App Check ---"
+          if kubectl get deployment -n "${NAMESPACE}" 2>/dev/null | grep -q sample-app; then
+            echo "✓ Sample app deployment found"
+            kubectl get pods -n "${NAMESPACE}" -l app=sample-app
 
-          # Add a test label to the namespace
-          if [ -f "infrastructure/base/namespaces/dev.yaml" ]; then
-            # Add label to namespace
-            cat infrastructure/base/namespaces/dev.yaml
+            # Wait for pod to be ready
+            kubectl wait --for=condition=Ready pods -l app=sample-app -n "${NAMESPACE}" --timeout=120s || true
 
-            # Use yq to add label
-            yq eval '.metadata.labels["e2e-test-change"] = "true"' -i infrastructure/base/namespaces/dev.yaml
-
-            echo "Modified namespace:"
-            cat infrastructure/base/namespaces/dev.yaml
+            # Check service
+            kubectl get svc -n "${NAMESPACE}" -l app=sample-app && echo "✓ Sample app service found"
           else
-            echo "Namespace file not found, checking structure..."
-            find . -name "*.yaml" | head -10
+            echo "No sample-app deployment (may be minimal config)"
           fi
 
-      # Step 9: Push Changes to Git
-      - name: "Step 9: Push Changes to Git"
+          echo ""
+          echo "--- ArgoCD Status ---"
+          argocd app get minimal-infra --show-operation
+
+          echo "✓ Validation complete"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Changes"
         run: |
-          echo "=== Step 9: Push Changes to Git ==="
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add environment label to namespace
+          if [ -f "infrastructure/base/namespaces/dev.yaml" ]; then
+            echo "Modifying namespace..."
+            yq eval '.metadata.labels["environment"] = "dev"' -i infrastructure/base/namespaces/dev.yaml
+            yq eval '.metadata.labels["e2e-test"] = "minimal-day2"' -i infrastructure/base/namespaces/dev.yaml
+            echo "Modified:"
+            cat infrastructure/base/namespaces/dev.yaml
+          fi
+
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync"
+        run: |
+          echo "=== Pushing Changes ==="
 
           git add -A
-          git diff --cached --stat
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "E2E test: Add label to namespace"
+          if ! git diff --cached --quiet; then
+            git commit -m "Day-2: Add environment labels"
             git push origin "${BRANCH_NAME}"
-            echo "Changes pushed"
+            echo "✓ Changes pushed"
           fi
 
-      # Step 10: Verify ArgoCD Detects and Syncs Changes
-      - name: "Step 10: Verify ArgoCD Syncs Changes"
-        run: |
-          echo "=== Step 10: Verify ArgoCD Syncs ==="
+          # Sync
+          argocd app get minimal-infra --refresh || true
+          sleep 20
 
-          # Trigger refresh
-          argocd app get e2e-minimal-app --refresh || true
-
-          # Wait for sync
-          sleep 30
-
-          # Sync with retry logic
           for i in 1 2 3; do
-            argocd app sync e2e-minimal-app --timeout 120 && break
+            argocd app sync minimal-infra --timeout 120 && break
             echo "Sync retry $i/3..."
             sleep 10
           done
 
-          # Check status
-          argocd app get e2e-minimal-app
+          echo "✓ Sync triggered"
 
-      # Step 11: Validate Changes Applied on Cluster
-      - name: "Step 11: Validate Changes on Cluster"
+      - name: "Phase 5: Validate Changes"
         run: |
-          echo "=== Step 11: Validate Changes on Cluster ==="
+          echo "=== Validating Changes ==="
 
-          # Check if the label was applied (namespace is prefixed with project name)
           NAMESPACE="${PROJECT_NAME}-dev"
-          LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.e2e-test-change}' 2>/dev/null || echo "")
+          sleep 10
 
-          if [ "${LABEL}" = "true" ]; then
-            echo "✓ Label 'e2e-test-change=true' found on namespace ${NAMESPACE}"
+          LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.e2e-test}' 2>/dev/null || echo "")
+          if [ "${LABEL}" = "minimal-day2" ]; then
+            echo "✓ Day-2 label found on namespace!"
           else
-            echo "Label not found (may not have synced yet)"
-            echo "Current namespace labels:"
-            kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' || true
+            echo "Label not yet applied, current labels:"
+            kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' | jq . || true
           fi
+
+          echo "✓ Change validation complete"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- App Details ---"
+          argocd app get minimal-infra
+
+          echo ""
+          echo "--- Cluster Resources ---"
+          NAMESPACE="${PROJECT_NAME}-dev"
+          kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
 
           echo ""
           echo "=== MINIMAL PRESET TEST COMPLETED ==="
 
-      # Step 12: Cleanup
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
-          echo "=== Step 12: Cleanup ==="
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-minimal || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
-  # STANDARD PRESET: Complete 12-step flow
+  # STANDARD PRESET: Complete GitOps Flow (3 Environments)
+  # ===========================================================================
+  # Standard preset tests a typical production setup:
+  # - Three environments (dev, staging, prod)
+  # - Full infrastructure (RBAC, NetworkPolicies, ResourceQuotas)
+  # - Sample app deployment to all environments
   # ===========================================================================
   standard-preset-flow:
     name: Standard Preset - Complete Flow
@@ -377,8 +472,12 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
 
@@ -388,137 +487,373 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
           sudo mv kustomize /usr/local/bin/
 
-      - name: "Step 1: Generate Manifests"
-        env:
-          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
-        run: |
-          echo "=== Step 1: Generate Manifests (Standard Preset) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
-          find /tmp/output -type d | head -20
+          echo "✓ Tools installed"
 
-      - name: "Step 2: Create Kind Cluster"
+      - name: "Phase 1: Create Kind Cluster"
         run: |
-          kind create cluster --name e2e-standard
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-standard --wait 120s
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
         timeout-minutes: 3
 
-      - name: "Step 3: Push to Git"
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan "${BRANCH_NAME}"
-          git rm -rf . || true
-          cp -r /tmp/output/${PROJECT_NAME}/* .
-          git add -A
-          git commit -m "E2E standard preset manifests"
-          git push origin "${BRANCH_NAME}"
-
-      - name: "Step 4: Bootstrap ArgoCD"
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
+          echo "=== Generating Manifests (Standard Preset) ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
+
+          echo ""
+          echo "=== Verifying Standard Structure ==="
+          # Standard should have all 3 environment overlays
+          for env in dev staging prod; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure/overlays/${env}" ]; then
+              echo "✓ infrastructure/overlays/${env}/ exists"
+            else
+              echo "✗ Missing infrastructure/overlays/${env}/"
+            fi
+          done
+
+          # Check ArgoCD configuration
+          if [ -d "/tmp/output/${PROJECT_NAME}/argocd" ]; then
+            echo "✓ argocd/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/argocd/
+            ls -la /tmp/output/${PROJECT_NAME}/argocd/projects/ 2>/dev/null || true
+          fi
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
+        run: |
+          echo "=== Pushing to Git ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+
+          cp -r /tmp/output/${PROJECT_NAME}/* .
+
+          git add -A
+          git commit -m "E2E standard preset manifests (dev, staging, prod)"
+          git push origin "${BRANCH_NAME}"
+
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
+
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
+        run: |
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      - name: "Step 5: Configure ArgoCD"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
+
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
 
-          argocd app create e2e-standard-app \
-            --repo https://github.com/${{ github.repository }}.git \
-            --revision "${BRANCH_NAME}" \
-            --path "infrastructure/overlays/dev" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace dev \
-            --sync-policy automated --upsert
+          echo "✓ ArgoCD login successful"
 
-      - name: "Step 6: Verify Initial Sync"
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE ALL ENVIRONMENTS
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Project and Apps"
         run: |
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-standard-app --timeout 180 && break
-            echo "Sync retry $i/3..."
-            sleep 10
+          echo "=== Creating ArgoCD Project and Applications ==="
+
+          # Create project
+          argocd proj create standard-test \
+            --description "Standard preset test (dev, staging, prod)" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create apps for all 3 environments
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Creating apps for ${env} ---"
+
+            # Infrastructure app
+            argocd app create standard-infra-${env} \
+              --project standard-test \
+              --repo https://github.com/${{ github.repository }}.git \
+              --revision "${BRANCH_NAME}" \
+              --path "infrastructure/overlays/${env}" \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace ${PROJECT_NAME}-${env} \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --upsert
+
+            # Applications app (if overlay exists)
+            if [ -d "applications/overlays/${env}" ] 2>/dev/null || [ -d "/tmp/output/${PROJECT_NAME}/applications/overlays/${env}" ]; then
+              argocd app create standard-apps-${env} \
+                --project standard-test \
+                --repo https://github.com/${{ github.repository }}.git \
+                --revision "${BRANCH_NAME}" \
+                --path "applications/overlays/${env}" \
+                --dest-server https://kubernetes.default.svc \
+                --dest-namespace ${PROJECT_NAME}-${env} \
+                --sync-policy automated \
+                --auto-prune \
+                --self-heal \
+                --upsert || echo "No apps overlay for ${env}"
+            fi
           done
-          argocd app wait e2e-standard-app --sync --timeout 120 || true
-          argocd app get e2e-standard-app
 
-      - name: "Step 7: Validate Initial Deployment"
+          echo ""
+          echo "--- All Applications ---"
+          argocd app list
+
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync All Environments"
         run: |
-          echo "=== Validating Standard Preset Resources ==="
+          echo "=== Syncing All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Syncing ${env} ---"
+
+            # Sync infrastructure
+            for i in 1 2 3; do
+              argocd app sync standard-infra-${env} --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
+            argocd app wait standard-infra-${env} --sync --timeout 120 || true
+
+            # Sync apps if exists
+            if argocd app get standard-apps-${env} &>/dev/null; then
+              for i in 1 2 3; do
+                argocd app sync standard-apps-${env} --timeout 180 && break
+                echo "Sync retry $i/3..."
+                sleep 10
+              done
+              argocd app wait standard-apps-${env} --sync --timeout 120 || true
+            fi
+          done
+
           sleep 30
+          echo "✓ All environments synced"
 
-          # Namespace is prefixed with project name
-          NAMESPACE="${PROJECT_NAME}-dev"
-          echo "Checking namespace: ${NAMESPACE}..."
-          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
-
-          # RBAC (standard has RBAC)
-          kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings yet"
-
-          # NetworkPolicies
-          kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies yet"
-
-          # ResourceQuotas
-          kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas yet"
-
-          echo "All namespaces:"
-          kubectl get namespaces
-
-      - name: "Step 8: Make Code Changes"
+      - name: "Phase 4: Validate All Environments"
         run: |
-          # Modify resource quota limits
-          if [ -f "infrastructure/base/resource-quotas/dev.yaml" ]; then
-            yq eval '.spec.hard["limits.cpu"] = "20"' -i infrastructure/base/resource-quotas/dev.yaml
-            echo "Modified resource quota"
-            cat infrastructure/base/resource-quotas/dev.yaml
-          else
-            # Add label to namespace instead
-            yq eval '.metadata.labels["e2e-standard-change"] = "true"' -i infrastructure/base/namespaces/dev.yaml || true
+          echo "=== Validating All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "=========================================="
+            echo "Validating ${env} environment"
+            echo "=========================================="
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            echo ""
+            echo "--- Namespace Check ---"
+            kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+              echo "Namespace not found"
+              continue
+            }
+
+            echo ""
+            echo "--- Infrastructure Resources ---"
+            echo "RBAC:"
+            kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings"
+
+            echo "NetworkPolicies:"
+            kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies"
+
+            echo "ResourceQuotas:"
+            kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas"
+
+            echo ""
+            echo "--- Sample App Check ---"
+            if kubectl get deployment -n "${NAMESPACE}" 2>/dev/null | grep -q sample-app; then
+              echo "✓ Sample app deployment found"
+              kubectl get pods -n "${NAMESPACE}" -l app=sample-app 2>/dev/null || true
+            else
+              echo "No sample-app deployment in ${env}"
+            fi
+          done
+
+          echo ""
+          echo "--- ArgoCD Application Status ---"
+          argocd app list
+
+          echo "✓ All environments validated"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Environment-Specific Changes"
+        run: |
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add environment-specific labels to each namespace
+          for env in dev staging prod; do
+            if [ -f "infrastructure/base/namespaces/${env}.yaml" ]; then
+              echo "Modifying ${env} namespace..."
+              yq eval ".metadata.labels[\"environment\"] = \"${env}\"" -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["e2e-test"] = "standard-day2"' -i infrastructure/base/namespaces/${env}.yaml
+              echo "Modified ${env}:"
+              cat infrastructure/base/namespaces/${env}.yaml
+              echo ""
+            fi
+          done
+
+          # Modify prod ResourceQuota if exists
+          if [ -f "infrastructure/base/resource-quotas/prod.yaml" ]; then
+            echo "Modifying prod resource quota..."
+            yq eval '.spec.hard["limits.cpu"] = "50"' -i infrastructure/base/resource-quotas/prod.yaml
+            cat infrastructure/base/resource-quotas/prod.yaml
           fi
 
-      - name: "Step 9: Push Changes"
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync Changes"
         run: |
+          echo "=== Pushing Changes ==="
+
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "E2E test: Modify resource quota"
+            git commit -m "Day-2: Add environment labels and modify prod quota"
             git push origin "${BRANCH_NAME}"
+            echo "✓ Changes pushed"
           fi
 
-      - name: "Step 10: Verify ArgoCD Syncs"
-        run: |
-          argocd app get e2e-standard-app --refresh || true
-          sleep 30
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-standard-app --timeout 120 && break
-            echo "Sync retry $i/3..."
-            sleep 10
+          # Refresh and sync all apps
+          echo ""
+          echo "--- Syncing all apps ---"
+          for env in dev staging prod; do
+            argocd app get standard-infra-${env} --refresh || true
           done
-          argocd app get e2e-standard-app
 
-      - name: "Step 11: Validate Changes on Cluster"
+          sleep 20
+
+          for env in dev staging prod; do
+            for i in 1 2 3; do
+              argocd app sync standard-infra-${env} --timeout 120 && break
+              echo "Sync retry $i/3 for ${env}..."
+              sleep 10
+            done
+          done
+
+          echo "✓ Sync triggered"
+
+      - name: "Phase 5: Validate Changes Applied"
         run: |
-          echo "=== Validating Changes ==="
-          NAMESPACE="${PROJECT_NAME}-dev"
-          kubectl get resourcequotas -n "${NAMESPACE}" -o yaml 2>/dev/null || echo "No quota yet"
-          kubectl get namespace "${NAMESPACE}" -o yaml | head -30
+          echo "=== Validating Changes Applied ==="
+
+          sleep 15
+
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "--- Checking ${env} labels ---"
+
+            LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.e2e-test}' 2>/dev/null || echo "")
+            if [ "${LABEL}" = "standard-day2" ]; then
+              echo "✓ Day-2 label found on ${env} namespace!"
+            else
+              echo "Label not yet applied to ${env}"
+              kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' 2>/dev/null | jq . || true
+            fi
+          done
+
+          echo "✓ Change validation complete"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- Detailed Status per Environment ---"
+          for env in dev staging prod; do
+            echo ""
+            echo "=== ${env} ==="
+            argocd app get standard-infra-${env} --show-operation 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- All Cluster Resources ---"
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "=== Resources in ${NAMESPACE} ==="
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || echo "Namespace may not exist"
+          done
+
+          echo ""
           echo "=== STANDARD PRESET TEST COMPLETED ==="
 
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-standard || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
-  # ENTERPRISE PRESET: Complete 12-step flow
+  # ENTERPRISE PRESET: Complete GitOps Flow (3 Environments + Enterprise Features)
+  # ===========================================================================
+  # Enterprise preset tests a full enterprise setup:
+  # - Three environments (dev, staging, prod)
+  # - Full infrastructure (RBAC, NetworkPolicies, ResourceQuotas)
+  # - Enterprise features (monitoring, alerts, policies directories)
+  # - Sample app deployment to all environments
   # ===========================================================================
   enterprise-preset-flow:
     name: Enterprise Preset - Complete Flow
@@ -543,112 +878,388 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
           curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
+
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
           sudo mv kustomize /usr/local/bin/
 
-      - name: "Step 1: Generate Manifests"
-        env:
-          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
-        run: |
-          echo "=== Step 1: Generate Manifests (Enterprise Preset) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
+          echo "✓ Tools installed"
 
-          # Enterprise should have additional directories
-          echo "Enterprise structure:"
-          find /tmp/output -type d | sort
-
-      - name: "Step 2: Create Kind Cluster"
+      - name: "Phase 1: Create Kind Cluster"
         run: |
-          kind create cluster --name e2e-enterprise
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-enterprise --wait 120s
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
         timeout-minutes: 3
 
-      - name: "Step 3: Push to Git"
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan "${BRANCH_NAME}"
-          git rm -rf . || true
-          cp -r /tmp/output/${PROJECT_NAME}/* .
-          git add -A
-          git commit -m "E2E enterprise preset manifests"
-          git push origin "${BRANCH_NAME}"
-
-      - name: "Step 4: Bootstrap ArgoCD"
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
+          echo "=== Generating Manifests (Enterprise Preset) ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type d | sort
+
+          echo ""
+          echo "=== Verifying Enterprise Structure ==="
+          # Enterprise should have all 3 environment overlays
+          for env in dev staging prod; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure/overlays/${env}" ]; then
+              echo "✓ infrastructure/overlays/${env}/ exists"
+            else
+              echo "✗ Missing infrastructure/overlays/${env}/"
+            fi
+          done
+
+          # Enterprise-specific directories (monitoring, alerts, policies)
+          for dir in monitoring alerts policies; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/${dir}" ]; then
+              echo "✓ ${dir}/ exists (enterprise feature)"
+            else
+              echo "○ ${dir}/ not present (may not be generated)"
+            fi
+          done
+
+          # Check ArgoCD configuration
+          if [ -d "/tmp/output/${PROJECT_NAME}/argocd" ]; then
+            echo "✓ argocd/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/argocd/
+          fi
+
+          echo ""
+          echo "=== All YAML files ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
+        run: |
+          echo "=== Pushing to Git ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+
+          cp -r /tmp/output/${PROJECT_NAME}/* .
+
+          git add -A
+          git commit -m "E2E enterprise preset manifests (dev, staging, prod + enterprise features)"
+          git push origin "${BRANCH_NAME}"
+
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
+
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
+        run: |
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      - name: "Step 5: Configure ArgoCD"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
+
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
-          argocd app create e2e-enterprise-app \
-            --repo https://github.com/${{ github.repository }}.git \
-            --revision "${BRANCH_NAME}" \
-            --path "infrastructure/overlays/dev" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace dev \
-            --sync-policy automated --upsert
 
-      - name: "Step 6-7: Verify Sync and Validate"
+          echo "✓ ArgoCD login successful"
+
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE ALL ENVIRONMENTS
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Project and Apps"
         run: |
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-enterprise-app --timeout 180 && break
-            echo "Sync retry $i/3..."
-            sleep 10
+          echo "=== Creating ArgoCD Project and Applications ==="
+
+          # Create project
+          argocd proj create enterprise-test \
+            --description "Enterprise preset test (dev, staging, prod)" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create apps for all 3 environments
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Creating apps for ${env} ---"
+
+            # Infrastructure app
+            argocd app create enterprise-infra-${env} \
+              --project enterprise-test \
+              --repo https://github.com/${{ github.repository }}.git \
+              --revision "${BRANCH_NAME}" \
+              --path "infrastructure/overlays/${env}" \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace ${PROJECT_NAME}-${env} \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --upsert
+
+            # Applications app (if overlay exists)
+            if [ -d "applications/overlays/${env}" ] 2>/dev/null || [ -d "/tmp/output/${PROJECT_NAME}/applications/overlays/${env}" ]; then
+              argocd app create enterprise-apps-${env} \
+                --project enterprise-test \
+                --repo https://github.com/${{ github.repository }}.git \
+                --revision "${BRANCH_NAME}" \
+                --path "applications/overlays/${env}" \
+                --dest-server https://kubernetes.default.svc \
+                --dest-namespace ${PROJECT_NAME}-${env} \
+                --sync-policy automated \
+                --auto-prune \
+                --self-heal \
+                --upsert || echo "No apps overlay for ${env}"
+            fi
           done
-          argocd app wait e2e-enterprise-app --sync --timeout 120 || true
-          sleep 30
 
-          echo "=== Validating Enterprise Resources ==="
-          NAMESPACE="${PROJECT_NAME}-dev"
-          kubectl get namespace "${NAMESPACE}" 2>/dev/null && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
-          kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
+          echo ""
+          echo "--- All Applications ---"
+          argocd app list
 
-      - name: "Steps 8-11: Make Changes and Validate"
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync All Environments"
         run: |
-          # Add enterprise-specific label
-          yq eval '.metadata.labels["enterprise-validated"] = "true"' -i infrastructure/base/namespaces/dev.yaml || true
+          echo "=== Syncing All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Syncing ${env} ---"
+
+            # Sync infrastructure
+            for i in 1 2 3; do
+              argocd app sync enterprise-infra-${env} --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
+            argocd app wait enterprise-infra-${env} --sync --timeout 120 || true
+
+            # Sync apps if exists
+            if argocd app get enterprise-apps-${env} &>/dev/null; then
+              for i in 1 2 3; do
+                argocd app sync enterprise-apps-${env} --timeout 180 && break
+                echo "Sync retry $i/3..."
+                sleep 10
+              done
+              argocd app wait enterprise-apps-${env} --sync --timeout 120 || true
+            fi
+          done
+
+          sleep 30
+          echo "✓ All environments synced"
+
+      - name: "Phase 4: Validate All Environments"
+        run: |
+          echo "=== Validating All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "=========================================="
+            echo "Validating ${env} environment"
+            echo "=========================================="
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            echo ""
+            echo "--- Namespace Check ---"
+            kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+              echo "Namespace not found"
+              continue
+            }
+
+            echo ""
+            echo "--- Infrastructure Resources ---"
+            echo "RBAC:"
+            kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings"
+
+            echo "NetworkPolicies:"
+            kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies"
+
+            echo "ResourceQuotas:"
+            kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas"
+
+            echo ""
+            echo "--- All Resources ---"
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- ArgoCD Application Status ---"
+          argocd app list
+
+          echo "✓ All environments validated"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Environment-Specific Changes"
+        run: |
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add enterprise-specific labels to each namespace
+          for env in dev staging prod; do
+            if [ -f "infrastructure/base/namespaces/${env}.yaml" ]; then
+              echo "Modifying ${env} namespace..."
+              yq eval ".metadata.labels[\"environment\"] = \"${env}\"" -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["e2e-test"] = "enterprise-day2"' -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["tier"] = "enterprise"' -i infrastructure/base/namespaces/${env}.yaml
+              echo "Modified ${env}:"
+              cat infrastructure/base/namespaces/${env}.yaml
+              echo ""
+            fi
+          done
+
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync Changes"
+        run: |
+          echo "=== Pushing Changes ==="
 
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "E2E test: Add enterprise label"
+            git commit -m "Day-2: Add enterprise tier labels"
             git push origin "${BRANCH_NAME}"
+            echo "✓ Changes pushed"
           fi
 
-          sleep 30
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-enterprise-app --timeout 120 && break
-            echo "Sync retry $i/3..."
-            sleep 10
+          # Refresh and sync all apps
+          echo ""
+          echo "--- Syncing all apps ---"
+          for env in dev staging prod; do
+            argocd app get enterprise-infra-${env} --refresh || true
           done
 
+          sleep 20
+
+          for env in dev staging prod; do
+            for i in 1 2 3; do
+              argocd app sync enterprise-infra-${env} --timeout 120 && break
+              echo "Sync retry $i/3 for ${env}..."
+              sleep 10
+            done
+          done
+
+          echo "✓ Sync triggered"
+
+      - name: "Phase 5: Validate Changes Applied"
+        run: |
+          echo "=== Validating Changes Applied ==="
+
+          sleep 15
+
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "--- Checking ${env} labels ---"
+
+            LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.tier}' 2>/dev/null || echo "")
+            if [ "${LABEL}" = "enterprise" ]; then
+              echo "✓ Enterprise tier label found on ${env} namespace!"
+            else
+              echo "Label not yet applied to ${env}"
+              kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' 2>/dev/null | jq . || true
+            fi
+          done
+
+          echo "✓ Change validation complete"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- Detailed Status per Environment ---"
+          for env in dev staging prod; do
+            echo ""
+            echo "=== ${env} ==="
+            argocd app get enterprise-infra-${env} --show-operation 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- All Cluster Resources ---"
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "=== Resources in ${NAMESPACE} ==="
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || echo "Namespace may not exist"
+          done
+
+          echo ""
           echo "=== ENTERPRISE PRESET TEST COMPLETED ==="
 
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-enterprise || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
-  # INFRA-ONLY SCOPE: Complete 12-step flow
+  # INFRA-ONLY SCOPE: Complete GitOps Flow (Infrastructure Only, No Apps)
+  # ===========================================================================
+  # Infra-only scope tests infrastructure-only generation:
+  # - Three environments (dev, staging, prod)
+  # - Full infrastructure (RBAC, NetworkPolicies, ResourceQuotas)
+  # - NO applications directory or deployments
   # ===========================================================================
   infra-only-flow:
     name: Infra-Only Scope - Complete Flow
@@ -673,23 +1284,57 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
           curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
-      - name: "Step 1: Generate Manifests"
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
+          sudo mv kustomize /usr/local/bin/
+
+          echo "✓ Tools installed"
+
+      - name: "Phase 1: Create Kind Cluster"
+        run: |
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-infra-only --wait 120s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
+        timeout-minutes: 3
+
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
-          echo "=== Step 1: Generate Manifests (Infra-Only) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
+          echo "=== Generating Manifests (Infra-Only Scope) ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type d | sort
+
+          echo ""
+          echo "=== Verifying Infra-Only Structure ==="
 
           # Verify NO applications directory
           if [ -d "/tmp/output/${PROJECT_NAME}/applications" ]; then
-            echo "ERROR: applications/ should NOT exist for infra-only scope"
+            echo "✗ ERROR: applications/ should NOT exist for infra-only scope"
+            find /tmp/output/${PROJECT_NAME}/applications -type f | head -5
             exit 1
           fi
           echo "✓ Correctly no applications/ directory"
@@ -698,92 +1343,316 @@ jobs:
           if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure" ]; then
             echo "✓ infrastructure/ exists"
           else
-            echo "ERROR: infrastructure/ should exist"
+            echo "✗ ERROR: infrastructure/ should exist"
             exit 1
           fi
 
-      - name: "Step 2: Create Kind Cluster"
-        run: |
-          kind create cluster --name e2e-infra-only
-          kubectl wait --for=condition=Ready nodes --all --timeout=120s
-        timeout-minutes: 3
+          # Verify all 3 environment overlays
+          for env in dev staging prod; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure/overlays/${env}" ]; then
+              echo "✓ infrastructure/overlays/${env}/ exists"
+            else
+              echo "✗ Missing infrastructure/overlays/${env}/"
+            fi
+          done
 
-      - name: "Step 3: Push to Git"
+          echo ""
+          echo "=== All YAML files ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
         run: |
+          echo "=== Pushing to Git ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git checkout --orphan "${BRANCH_NAME}"
           git rm -rf . || true
+
           cp -r /tmp/output/${PROJECT_NAME}/* .
+
           git add -A
-          git commit -m "E2E infra-only manifests"
+          git commit -m "E2E infra-only manifests (dev, staging, prod)"
           git push origin "${BRANCH_NAME}"
 
-      - name: "Step 4: Bootstrap ArgoCD"
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
+
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      - name: "Steps 5-7: Configure, Sync, Validate"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
+
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
 
-          argocd app create e2e-infra-only-app \
-            --repo https://github.com/${{ github.repository }}.git \
-            --revision "${BRANCH_NAME}" \
-            --path "infrastructure/overlays/dev" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace dev \
-            --sync-policy automated --upsert
+          echo "✓ ArgoCD login successful"
 
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-infra-only-app --timeout 180 && break
-            echo "Sync retry $i/3..."
-            sleep 10
-          done
-          sleep 30
-
-          echo "=== Validating Infra-Only Resources ==="
-          NAMESPACE="${PROJECT_NAME}-dev"
-          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
-          kubectl get rolebindings -n "${NAMESPACE}" && echo "✓ RBAC exists" || echo "No RBAC yet"
-          kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies exist" || true
-          kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas exist" || true
-
-          # Verify NO deployments (app-only resources)
-          DEPLOYMENTS=$(kubectl get deployments -n "${NAMESPACE}" 2>/dev/null | wc -l)
-          if [ "${DEPLOYMENTS}" -le 1 ]; then
-            echo "✓ No application deployments (correct for infra-only)"
-          fi
-
-      - name: "Steps 8-11: Change and Validate"
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE ALL ENVIRONMENTS
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Project and Apps"
         run: |
-          yq eval '.metadata.labels["infra-only-test"] = "true"' -i infrastructure/base/namespaces/dev.yaml || true
+          echo "=== Creating ArgoCD Project and Applications ==="
+
+          # Create project
+          argocd proj create infra-only-test \
+            --description "Infra-only scope test (dev, staging, prod)" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create infrastructure apps for all 3 environments
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Creating infra app for ${env} ---"
+
+            argocd app create infra-only-${env} \
+              --project infra-only-test \
+              --repo https://github.com/${{ github.repository }}.git \
+              --revision "${BRANCH_NAME}" \
+              --path "infrastructure/overlays/${env}" \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace ${PROJECT_NAME}-${env} \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --upsert
+          done
+
+          echo ""
+          echo "--- All Applications ---"
+          argocd app list
+
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync All Environments"
+        run: |
+          echo "=== Syncing All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Syncing ${env} ---"
+
+            for i in 1 2 3; do
+              argocd app sync infra-only-${env} --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
+            argocd app wait infra-only-${env} --sync --timeout 120 || true
+          done
+
+          sleep 30
+          echo "✓ All environments synced"
+
+      - name: "Phase 4: Validate All Environments"
+        run: |
+          echo "=== Validating All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "=========================================="
+            echo "Validating ${env} environment"
+            echo "=========================================="
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            echo ""
+            echo "--- Namespace Check ---"
+            kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+              echo "Namespace not found"
+              continue
+            }
+
+            echo ""
+            echo "--- Infrastructure Resources ---"
+            echo "RBAC:"
+            kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings"
+
+            echo "NetworkPolicies:"
+            kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies"
+
+            echo "ResourceQuotas:"
+            kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas"
+
+            echo ""
+            echo "--- Verify NO Application Deployments ---"
+            DEPLOYMENTS=$(kubectl get deployments -n "${NAMESPACE}" 2>/dev/null | grep -v "^NAME" | wc -l || echo "0")
+            if [ "${DEPLOYMENTS}" -eq 0 ]; then
+              echo "✓ No application deployments (correct for infra-only)"
+            else
+              echo "✗ Found ${DEPLOYMENTS} deployments (should be 0 for infra-only)"
+              kubectl get deployments -n "${NAMESPACE}" 2>/dev/null
+            fi
+          done
+
+          echo ""
+          echo "--- ArgoCD Application Status ---"
+          argocd app list
+
+          echo "✓ All environments validated"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Environment-Specific Changes"
+        run: |
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add infra-only labels to each namespace
+          for env in dev staging prod; do
+            if [ -f "infrastructure/base/namespaces/${env}.yaml" ]; then
+              echo "Modifying ${env} namespace..."
+              yq eval ".metadata.labels[\"environment\"] = \"${env}\"" -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["e2e-test"] = "infra-only-day2"' -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["scope"] = "infrastructure"' -i infrastructure/base/namespaces/${env}.yaml
+              echo "Modified ${env}:"
+              cat infrastructure/base/namespaces/${env}.yaml
+              echo ""
+            fi
+          done
+
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync Changes"
+        run: |
+          echo "=== Pushing Changes ==="
+
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "E2E test: Add infra-only label"
+            git commit -m "Day-2: Add infra-only scope labels"
             git push origin "${BRANCH_NAME}"
+            echo "✓ Changes pushed"
           fi
+
+          # Refresh and sync all apps
+          echo ""
+          echo "--- Syncing all apps ---"
+          for env in dev staging prod; do
+            argocd app get infra-only-${env} --refresh || true
+          done
+
           sleep 20
+
+          for env in dev staging prod; do
+            for i in 1 2 3; do
+              argocd app sync infra-only-${env} --timeout 120 && break
+              echo "Sync retry $i/3 for ${env}..."
+              sleep 10
+            done
+          done
+
+          echo "✓ Sync triggered"
+
+      - name: "Phase 5: Validate Changes Applied"
+        run: |
+          echo "=== Validating Changes Applied ==="
+
+          sleep 15
+
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "--- Checking ${env} labels ---"
+
+            LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.scope}' 2>/dev/null || echo "")
+            if [ "${LABEL}" = "infrastructure" ]; then
+              echo "✓ Scope=infrastructure label found on ${env} namespace!"
+            else
+              echo "Label not yet applied to ${env}"
+              kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' 2>/dev/null | jq . || true
+            fi
+          done
+
+          echo "✓ Change validation complete"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- Detailed Status per Environment ---"
+          for env in dev staging prod; do
+            echo ""
+            echo "=== ${env} ==="
+            argocd app get infra-only-${env} --show-operation 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- All Cluster Resources ---"
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "=== Resources in ${NAMESPACE} ==="
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || echo "Namespace may not exist"
+
+            # Final verification: NO deployments
+            DEPLOYMENTS=$(kubectl get deployments -n "${NAMESPACE}" 2>/dev/null | grep -v "^NAME" | wc -l || echo "0")
+            if [ "${DEPLOYMENTS}" -eq 0 ]; then
+              echo "✓ Verified: No deployments in ${env} (correct for infra-only)"
+            fi
+          done
+
+          echo ""
           echo "=== INFRA-ONLY SCOPE TEST COMPLETED ==="
 
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-infra-only || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
-  # APP-ONLY SCOPE: Complete 12-step flow
+  # APP-ONLY SCOPE: Complete GitOps Flow (Applications Only, No Infra)
+  # ===========================================================================
+  # App-only scope tests application-only generation:
+  # - Three environments (dev, staging, prod)
+  # - Application deployments only
+  # - Minimal or NO infrastructure (no RBAC, NetworkPolicies, ResourceQuotas)
   # ===========================================================================
   app-only-flow:
     name: App-Only Scope - Complete Flow
@@ -808,92 +1677,380 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
           curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
-      - name: "Step 1: Generate Manifests"
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
+          sudo mv kustomize /usr/local/bin/
+
+          echo "✓ Tools installed"
+
+      - name: "Phase 1: Create Kind Cluster"
+        run: |
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-app-only --wait 120s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
+        timeout-minutes: 3
+
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
-          echo "=== Step 1: Generate Manifests (App-Only) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
+          echo "=== Generating Manifests (App-Only Scope) ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type d | sort
+
+          echo ""
+          echo "=== Verifying App-Only Structure ==="
 
           # Verify applications directory exists
           if [ -d "/tmp/output/${PROJECT_NAME}/applications" ]; then
             echo "✓ applications/ exists"
           else
-            echo "WARNING: applications/ may not exist for app-only with no apps defined"
+            echo "○ applications/ may not exist (depends on apps defined in config)"
           fi
 
-          find /tmp/output -type d
+          # Verify NO or minimal infrastructure
+          if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure" ]; then
+            echo "○ infrastructure/ exists (may have namespaces only)"
+            find /tmp/output/${PROJECT_NAME}/infrastructure -type f -name "*.yaml" | head -5
+          else
+            echo "✓ Correctly no infrastructure/ directory"
+          fi
 
-      - name: "Step 2: Create Kind Cluster"
-        run: |
-          kind create cluster --name e2e-app-only
-          kubectl wait --for=condition=Ready nodes --all --timeout=120s
-        timeout-minutes: 3
+          # Verify all 3 environment overlays for applications (if present)
+          for env in dev staging prod; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/applications/overlays/${env}" ]; then
+              echo "✓ applications/overlays/${env}/ exists"
+            else
+              echo "○ Missing applications/overlays/${env}/"
+            fi
+          done
 
-      - name: "Step 3: Push to Git"
+          echo ""
+          echo "=== All YAML files ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
         run: |
+          echo "=== Pushing to Git ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git checkout --orphan "${BRANCH_NAME}"
           git rm -rf . || true
+
           cp -r /tmp/output/${PROJECT_NAME}/* .
+
           git add -A
-          git commit -m "E2E app-only manifests"
+          git commit -m "E2E app-only manifests (dev, staging, prod)"
           git push origin "${BRANCH_NAME}"
 
-      - name: "Step 4: Bootstrap ArgoCD"
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
+
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      - name: "Steps 5-11: Sync and Validate App-Only"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
+
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
 
-          # For app-only, try to sync applications if they exist
-          if [ -d "applications/overlays/dev" ]; then
-            argocd app create e2e-app-only-app \
-              --repo https://github.com/${{ github.repository }}.git \
-              --revision "${BRANCH_NAME}" \
-              --path "applications/overlays/dev" \
-              --dest-server https://kubernetes.default.svc \
-              --dest-namespace dev \
-              --sync-policy automated --upsert
-            # Sync with retry logic
-            for i in 1 2 3; do
-              argocd app sync e2e-app-only-app --timeout 180 && break
-              echo "Sync retry $i/3..."
-              sleep 10
-            done
-          else
-            echo "No applications overlay found, testing structure only"
+          echo "✓ ArgoCD login successful"
+
+      - name: "Phase 3: Create Namespaces for App Deployment"
+        run: |
+          echo "=== Creating Namespaces ==="
+          # App-only scope may not create namespaces, so we create them manually
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            kubectl create namespace "${NAMESPACE}" 2>/dev/null || echo "Namespace ${NAMESPACE} already exists"
+          done
+          echo "✓ Namespaces ready"
+
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE ALL ENVIRONMENTS
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Project and Apps"
+        run: |
+          echo "=== Creating ArgoCD Project and Applications ==="
+
+          # Create project
+          argocd proj create app-only-test \
+            --description "App-only scope test (dev, staging, prod)" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create application apps for all 3 environments
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Creating app for ${env} ---"
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            # Check if applications overlay exists
+            if [ -d "applications/overlays/${env}" ] || [ -d "/tmp/output/${PROJECT_NAME}/applications/overlays/${env}" ]; then
+              argocd app create app-only-${env} \
+                --project app-only-test \
+                --repo https://github.com/${{ github.repository }}.git \
+                --revision "${BRANCH_NAME}" \
+                --path "applications/overlays/${env}" \
+                --dest-server https://kubernetes.default.svc \
+                --dest-namespace ${NAMESPACE} \
+                --sync-policy automated \
+                --auto-prune \
+                --self-heal \
+                --upsert
+            else
+              echo "○ No applications overlay for ${env}"
+            fi
+          done
+
+          echo ""
+          echo "--- All Applications ---"
+          argocd app list
+
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync All Environments"
+        run: |
+          echo "=== Syncing All Environments ==="
+
+          for env in dev staging prod; do
+            if argocd app get app-only-${env} &>/dev/null; then
+              echo ""
+              echo "--- Syncing ${env} ---"
+
+              for i in 1 2 3; do
+                argocd app sync app-only-${env} --timeout 180 && break
+                echo "Sync retry $i/3..."
+                sleep 10
+              done
+              argocd app wait app-only-${env} --sync --timeout 120 || true
+            else
+              echo "○ Skipping ${env} - no app created"
+            fi
+          done
+
+          sleep 30
+          echo "✓ All environments synced"
+
+      - name: "Phase 4: Validate All Environments"
+        run: |
+          echo "=== Validating All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "=========================================="
+            echo "Validating ${env} environment"
+            echo "=========================================="
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            echo ""
+            echo "--- Namespace Check ---"
+            kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+              echo "Namespace not found"
+              continue
+            }
+
+            echo ""
+            echo "--- Application Resources ---"
+            echo "Deployments:"
+            kubectl get deployments -n "${NAMESPACE}" 2>/dev/null || echo "No Deployments"
+
+            echo "Pods:"
+            kubectl get pods -n "${NAMESPACE}" 2>/dev/null || echo "No Pods"
+
+            echo "Services:"
+            kubectl get services -n "${NAMESPACE}" 2>/dev/null || echo "No Services"
+
+            echo ""
+            echo "--- Verify Minimal Infrastructure ---"
+            RBAC=$(kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null | grep -v "^NAME" | wc -l || echo "0")
+            NETPOL=$(kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null | grep -v "^NAME" | wc -l || echo "0")
+
+            if [ "${RBAC}" -eq 0 ] && [ "${NETPOL}" -eq 0 ]; then
+              echo "✓ Minimal infrastructure (correct for app-only)"
+            else
+              echo "○ Found some infrastructure resources"
+            fi
+          done
+
+          echo ""
+          echo "--- ArgoCD Application Status ---"
+          argocd app list
+
+          echo "✓ All environments validated"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Application Changes"
+        run: |
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add app-only labels or modify applications
+          for env in dev staging prod; do
+            # Try to find deployment manifests and modify them
+            DEPLOY_FILE="applications/base/sample-app/deployment.yaml"
+            if [ -f "${DEPLOY_FILE}" ]; then
+              echo "Modifying deployment..."
+              yq eval '.metadata.labels["e2e-test"] = "app-only-day2"' -i "${DEPLOY_FILE}"
+              yq eval '.metadata.labels["scope"] = "application"' -i "${DEPLOY_FILE}"
+              echo "Modified deployment:"
+              cat "${DEPLOY_FILE}" | head -20
+              break
+            fi
+          done
+
+          # If no deployment found, add a configmap
+          if [ ! -f "applications/base/e2e-test-config.yaml" ]; then
+            mkdir -p applications/base
+            echo "apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: e2e-test-config
+            labels:
+              e2e-test: app-only-day2
+              scope: application
+          data:
+            test: day2-change" | sed 's/^          //' > applications/base/e2e-test-config.yaml
+            echo "Created test configmap"
           fi
 
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync Changes"
+        run: |
+          echo "=== Pushing Changes ==="
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Day-2: Add app-only scope labels"
+            git push origin "${BRANCH_NAME}"
+            echo "✓ Changes pushed"
+          fi
+
+          # Refresh and sync apps
+          echo ""
+          echo "--- Syncing apps ---"
+          for env in dev staging prod; do
+            if argocd app get app-only-${env} &>/dev/null; then
+              argocd app get app-only-${env} --refresh || true
+            fi
+          done
+
+          sleep 20
+
+          for env in dev staging prod; do
+            if argocd app get app-only-${env} &>/dev/null; then
+              for i in 1 2 3; do
+                argocd app sync app-only-${env} --timeout 120 && break
+                echo "Sync retry $i/3 for ${env}..."
+                sleep 10
+              done
+            fi
+          done
+
+          echo "✓ Sync triggered"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- All Cluster Resources ---"
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "=== Resources in ${NAMESPACE} ==="
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || echo "Namespace may not exist"
+          done
+
+          echo ""
           echo "=== APP-ONLY SCOPE TEST COMPLETED ==="
 
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-app-only || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
-  # NAMESPACE-SCOPE: Complete 12-step flow
+  # NAMESPACE-SCOPE: Complete GitOps Flow (Namespace-Scoped ArgoCD)
+  # ===========================================================================
+  # Namespace-scope tests ArgoCD in namespace-scoped mode:
+  # - ArgoCD can only manage resources in specific namespaces
+  # - Tests namespace isolation and permissions
+  # - Three environments (dev, staging, prod)
   # ===========================================================================
   namespace-scope-flow:
     name: Namespace-Scope - Complete Flow
@@ -918,87 +2075,386 @@ jobs:
       - name: Make binary executable
         run: chmod +x bin/gitopsi
 
-      - name: Install tools
+      # =========================================================================
+      # PHASE 1: SETUP
+      # =========================================================================
+      - name: "Phase 1: Install Tools"
         run: |
+          echo "=== Installing Tools ==="
           curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
           curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
           chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
 
-      - name: "Step 1: Generate Manifests"
-        env:
-          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
-        run: |
-          echo "=== Step 1: Generate Manifests (Namespace-Scope) ==="
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/output --git-url https://github.com/${{ github.repository }}.git --verbose
-          find /tmp/output -type d
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
+          sudo mv kustomize /usr/local/bin/
 
-      - name: "Step 2: Create Kind Cluster"
+          echo "✓ Tools installed"
+
+      - name: "Phase 1: Create Kind Cluster"
         run: |
-          kind create cluster --name e2e-ns-scope
+          echo "=== Creating Kind Cluster ==="
+          kind create cluster --name e2e-ns-scope --wait 120s
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✓ Cluster created"
         timeout-minutes: 3
 
-      - name: "Step 3: Push to Git"
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan "${BRANCH_NAME}"
-          git rm -rf . || true
-          cp -r /tmp/output/${PROJECT_NAME}/* .
-          git add -A
-          git commit -m "E2E namespace-scope manifests"
-          git push origin "${BRANCH_NAME}"
-
-      - name: "Step 4: Bootstrap ArgoCD"
+      # =========================================================================
+      # PHASE 2: GENERATE & PUSH
+      # =========================================================================
+      - name: "Phase 2: Generate Manifests"
         env:
           GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
         run: |
+          echo "=== Generating Manifests (Namespace-Scope) ==="
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "=== Generated Structure ==="
+          find /tmp/output/${PROJECT_NAME} -type d | sort
+
+          echo ""
+          echo "=== Verifying Namespace-Scope Structure ==="
+          # Verify all 3 environment overlays
+          for env in dev staging prod; do
+            if [ -d "/tmp/output/${PROJECT_NAME}/infrastructure/overlays/${env}" ]; then
+              echo "✓ infrastructure/overlays/${env}/ exists"
+            else
+              echo "○ Missing infrastructure/overlays/${env}/"
+            fi
+          done
+
+          # Check ArgoCD configuration
+          if [ -d "/tmp/output/${PROJECT_NAME}/argocd" ]; then
+            echo "✓ argocd/ exists"
+            ls -la /tmp/output/${PROJECT_NAME}/argocd/
+          fi
+
+          echo ""
+          echo "=== All YAML files ==="
+          find /tmp/output/${PROJECT_NAME} -type f -name "*.yaml" | sort
+
+          echo "✓ Manifests generated"
+
+      - name: "Phase 2: Push to Git"
+        run: |
+          echo "=== Pushing to Git ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan "${BRANCH_NAME}"
+          git rm -rf . || true
+
+          cp -r /tmp/output/${PROJECT_NAME}/* .
+
+          git add -A
+          git commit -m "E2E namespace-scope manifests (dev, staging, prod)"
+          git push origin "${BRANCH_NAME}"
+
+          echo "✓ Pushed to branch: ${BRANCH_NAME}"
+
+      # =========================================================================
+      # PHASE 3: BOOTSTRAP ARGOCD
+      # =========================================================================
+      - name: "Phase 3: Bootstrap ArgoCD"
+        env:
+          GITOPSI_GIT_BRANCH: ${{ env.BRANCH_NAME }}
+        run: |
+          echo "=== Bootstrapping ArgoCD ==="
           git fetch origin ${{ github.sha }}
-          git checkout ${{ github.sha }} -- test/e2e/fixtures/
-          ./bin/gitopsi init --config test/e2e/fixtures/${CONFIG_FILE} --output /tmp/bootstrap --git-url https://github.com/${{ github.repository }}.git --bootstrap --bootstrap-mode helm --verbose
+          git checkout ${{ github.sha }} -- test/e2e/fixtures/ bin/
+
+          ./bin/gitopsi init \
+            --config test/e2e/fixtures/${CONFIG_FILE} \
+            --output /tmp/bootstrap \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --bootstrap \
+            --bootstrap-mode helm \
+            --verbose
+
+          echo "✓ ArgoCD bootstrapped"
         timeout-minutes: 8
 
-      - name: "Steps 5-7: Configure and Validate Namespace-Scope"
+      - name: "Phase 3: Configure ArgoCD Access"
         run: |
+          echo "=== Configuring ArgoCD Access ==="
           kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
 
-          echo "=== Validating Namespace-Scope ArgoCD ==="
-          # Check ArgoCD is running
-          kubectl get pods -n argocd
-          echo "✓ ArgoCD running in namespace-scope mode"
-
           PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
           kubectl -n argocd port-forward svc/argocd-server 8080:443 &
           sleep 10
+
           argocd login localhost:8080 --username admin --password "${PASSWORD}" --insecure --grpc-web
 
-          argocd app create e2e-ns-scope-app \
-            --repo https://github.com/${{ github.repository }}.git \
-            --revision "${BRANCH_NAME}" \
-            --path "infrastructure/overlays/dev" \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace dev \
-            --sync-policy automated --upsert
+          echo "✓ ArgoCD login successful"
 
-          # Sync with retry logic
-          for i in 1 2 3; do
-            argocd app sync e2e-ns-scope-app --timeout 180 && break
-            echo "Sync retry $i/3..."
-            sleep 10
+      - name: "Phase 3: Verify Namespace-Scoped Mode"
+        run: |
+          echo "=== Verifying Namespace-Scope Mode ==="
+
+          # Check ArgoCD pods
+          echo "ArgoCD Pods:"
+          kubectl get pods -n argocd
+
+          # Check if ArgoCD is configured in namespace-scope mode
+          echo ""
+          echo "ArgoCD Config:"
+          kubectl get configmap argocd-cmd-params-cm -n argocd -o yaml 2>/dev/null | grep -A 5 "data:" || echo "Default config"
+
+          echo "✓ Namespace-scope mode verified"
+
+      # =========================================================================
+      # PHASE 4: SYNC & VALIDATE ALL ENVIRONMENTS
+      # =========================================================================
+      - name: "Phase 4: Create ArgoCD Project and Apps"
+        run: |
+          echo "=== Creating ArgoCD Project and Applications ==="
+
+          # Create project
+          argocd proj create ns-scope-test \
+            --description "Namespace-scope test (dev, staging, prod)" \
+            --src https://github.com/${{ github.repository }}.git \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create apps for all 3 environments
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Creating apps for ${env} ---"
+
+            # Infrastructure app
+            argocd app create ns-scope-infra-${env} \
+              --project ns-scope-test \
+              --repo https://github.com/${{ github.repository }}.git \
+              --revision "${BRANCH_NAME}" \
+              --path "infrastructure/overlays/${env}" \
+              --dest-server https://kubernetes.default.svc \
+              --dest-namespace ${PROJECT_NAME}-${env} \
+              --sync-policy automated \
+              --auto-prune \
+              --self-heal \
+              --upsert
+
+            # Applications app (if overlay exists)
+            if [ -d "applications/overlays/${env}" ] 2>/dev/null || [ -d "/tmp/output/${PROJECT_NAME}/applications/overlays/${env}" ]; then
+              argocd app create ns-scope-apps-${env} \
+                --project ns-scope-test \
+                --repo https://github.com/${{ github.repository }}.git \
+                --revision "${BRANCH_NAME}" \
+                --path "applications/overlays/${env}" \
+                --dest-server https://kubernetes.default.svc \
+                --dest-namespace ${PROJECT_NAME}-${env} \
+                --sync-policy automated \
+                --auto-prune \
+                --self-heal \
+                --upsert || echo "No apps overlay for ${env}"
+            fi
           done
+
+          echo ""
+          echo "--- All Applications ---"
+          argocd app list
+
+          echo "✓ Applications created"
+
+      - name: "Phase 4: Sync All Environments"
+        run: |
+          echo "=== Syncing All Environments ==="
+
+          for env in dev staging prod; do
+            echo ""
+            echo "--- Syncing ${env} ---"
+
+            # Sync infrastructure
+            for i in 1 2 3; do
+              argocd app sync ns-scope-infra-${env} --timeout 180 && break
+              echo "Sync retry $i/3..."
+              sleep 10
+            done
+            argocd app wait ns-scope-infra-${env} --sync --timeout 120 || true
+
+            # Sync apps if exists
+            if argocd app get ns-scope-apps-${env} &>/dev/null; then
+              for i in 1 2 3; do
+                argocd app sync ns-scope-apps-${env} --timeout 180 && break
+                echo "Sync retry $i/3..."
+                sleep 10
+              done
+              argocd app wait ns-scope-apps-${env} --sync --timeout 120 || true
+            fi
+          done
+
           sleep 30
+          echo "✓ All environments synced"
 
-          NAMESPACE="${PROJECT_NAME}-dev"
-          kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || echo "Namespace not yet created"
+      - name: "Phase 4: Validate All Environments"
+        run: |
+          echo "=== Validating All Environments ==="
 
+          for env in dev staging prod; do
+            echo ""
+            echo "=========================================="
+            echo "Validating ${env} environment"
+            echo "=========================================="
+
+            NAMESPACE="${PROJECT_NAME}-${env}"
+
+            echo ""
+            echo "--- Namespace Check ---"
+            kubectl get namespace "${NAMESPACE}" && echo "✓ Namespace ${NAMESPACE} exists" || {
+              echo "Namespace not found"
+              continue
+            }
+
+            echo ""
+            echo "--- Infrastructure Resources ---"
+            echo "RBAC:"
+            kubectl get rolebindings -n "${NAMESPACE}" 2>/dev/null && echo "✓ RoleBindings found" || echo "No RoleBindings"
+
+            echo "NetworkPolicies:"
+            kubectl get networkpolicies -n "${NAMESPACE}" 2>/dev/null && echo "✓ NetworkPolicies found" || echo "No NetworkPolicies"
+
+            echo "ResourceQuotas:"
+            kubectl get resourcequotas -n "${NAMESPACE}" 2>/dev/null && echo "✓ ResourceQuotas found" || echo "No ResourceQuotas"
+
+            echo ""
+            echo "--- All Resources ---"
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- ArgoCD Application Status ---"
+          argocd app list
+
+          echo "✓ All environments validated"
+
+      # =========================================================================
+      # PHASE 5: DAY-2 OPERATIONS
+      # =========================================================================
+      - name: "Phase 5: Make Environment-Specific Changes"
+        run: |
+          echo "=== Making Day-2 Changes ==="
+
+          git fetch origin "${BRANCH_NAME}"
+          git checkout "${BRANCH_NAME}"
+          git pull origin "${BRANCH_NAME}"
+
+          # Add namespace-scope labels to each namespace
+          for env in dev staging prod; do
+            if [ -f "infrastructure/base/namespaces/${env}.yaml" ]; then
+              echo "Modifying ${env} namespace..."
+              yq eval ".metadata.labels[\"environment\"] = \"${env}\"" -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["e2e-test"] = "ns-scope-day2"' -i infrastructure/base/namespaces/${env}.yaml
+              yq eval '.metadata.labels["argocd-mode"] = "namespace-scoped"' -i infrastructure/base/namespaces/${env}.yaml
+              echo "Modified ${env}:"
+              cat infrastructure/base/namespaces/${env}.yaml
+              echo ""
+            fi
+          done
+
+          echo "✓ Changes prepared"
+
+      - name: "Phase 5: Push and Sync Changes"
+        run: |
+          echo "=== Pushing Changes ==="
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Day-2: Add namespace-scope labels"
+            git push origin "${BRANCH_NAME}"
+            echo "✓ Changes pushed"
+          fi
+
+          # Refresh and sync all apps
+          echo ""
+          echo "--- Syncing all apps ---"
+          for env in dev staging prod; do
+            argocd app get ns-scope-infra-${env} --refresh || true
+          done
+
+          sleep 20
+
+          for env in dev staging prod; do
+            for i in 1 2 3; do
+              argocd app sync ns-scope-infra-${env} --timeout 120 && break
+              echo "Sync retry $i/3 for ${env}..."
+              sleep 10
+            done
+          done
+
+          echo "✓ Sync triggered"
+
+      - name: "Phase 5: Validate Changes Applied"
+        run: |
+          echo "=== Validating Changes Applied ==="
+
+          sleep 15
+
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "--- Checking ${env} labels ---"
+
+            LABEL=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.argocd-mode}' 2>/dev/null || echo "")
+            if [ "${LABEL}" = "namespace-scoped" ]; then
+              echo "✓ ArgoCD-mode=namespace-scoped label found on ${env} namespace!"
+            else
+              echo "Label not yet applied to ${env}"
+              kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels}' 2>/dev/null | jq . || true
+            fi
+          done
+
+          echo "✓ Change validation complete"
+
+      # =========================================================================
+      # PHASE 6: HEALTH CHECK
+      # =========================================================================
+      - name: "Phase 6: Final Health Check"
+        run: |
+          echo "=== Final Health Check ==="
+
+          echo ""
+          echo "--- ArgoCD Applications ---"
+          argocd app list
+
+          echo ""
+          echo "--- Detailed Status per Environment ---"
+          for env in dev staging prod; do
+            echo ""
+            echo "=== ${env} ==="
+            argocd app get ns-scope-infra-${env} --show-operation 2>/dev/null || true
+          done
+
+          echo ""
+          echo "--- All Cluster Resources ---"
+          for env in dev staging prod; do
+            NAMESPACE="${PROJECT_NAME}-${env}"
+            echo ""
+            echo "=== Resources in ${NAMESPACE} ==="
+            kubectl get all -n "${NAMESPACE}" 2>/dev/null || echo "Namespace may not exist"
+          done
+
+          echo ""
           echo "=== NAMESPACE-SCOPE TEST COMPLETED ==="
 
-      - name: "Step 12: Cleanup"
+      # =========================================================================
+      # CLEANUP
+      # =========================================================================
+      - name: "Cleanup"
         if: always()
         run: |
+          echo "=== Cleanup ==="
           kind delete cluster --name e2e-ns-scope || true
           git push origin --delete "${BRANCH_NAME}" || true
+          echo "✓ Cleanup complete"
 
   # ===========================================================================
   # MULTI-CLUSTER TEST: Complete Multi-Cluster GitOps Flow

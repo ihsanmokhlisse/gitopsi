@@ -342,7 +342,7 @@ func TestGitOpsToolInfo_EmptyPassword(t *testing.T) {
 
 // Tests for EnvironmentInfo struct
 
-func TestEnvironmentInfo_AllFields(t *testing.T) {
+func TestEnvironmentInfo_AllFields_Summary(t *testing.T) {
 	env := EnvironmentInfo{
 		Name:      "production",
 		Namespace: "prod",
@@ -435,7 +435,7 @@ func TestApplicationInfo_NoChildren(t *testing.T) {
 	}
 }
 
-func TestApplicationInfo_EmptyChildren(t *testing.T) {
+func TestApplicationInfo_EmptyChildren_Summary(t *testing.T) {
 	app := ApplicationInfo{
 		Name:     "simple-app",
 		Type:     "Application",
@@ -663,7 +663,7 @@ func TestSaveSummary_InvalidPath(t *testing.T) {
 	}
 }
 
-func TestSaveSummary_EmptySummary(t *testing.T) {
+func TestSaveSummary_EmptySummary_Summary(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	summary := &SetupSummary{}
@@ -783,7 +783,7 @@ func TestLoadSummary_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestLoadSummary_EmptyFile(t *testing.T) {
+func TestLoadSummary_EmptyFile_Summary(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create empty file

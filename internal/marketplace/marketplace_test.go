@@ -2080,8 +2080,8 @@ func TestDependency_AllFields(t *testing.T) {
 	}
 }
 
-func TestPatternDependency_Required(t *testing.T) {
-	dep := PatternDependency{
+func TestDependency_Required(t *testing.T) {
+	dep := Dependency{
 		Name:     "required-pattern",
 		Version:  "2.0.0",
 		Optional: false,

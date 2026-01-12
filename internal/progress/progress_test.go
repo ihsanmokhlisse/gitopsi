@@ -376,6 +376,7 @@ func TestUpdateStep(t *testing.T) {
 
 	t.Run("with active spinner", func(t *testing.T) {
 		p := New("Test", "project")
+		p.SetQuiet(true) // Disable spinner animation to avoid race condition
 
 		section := p.StartSection("Test Section")
 		_ = p.StartStep(section, "Test Step")

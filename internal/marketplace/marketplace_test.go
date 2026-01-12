@@ -2062,8 +2062,8 @@ func TestRegistryAuth_AllAuthTypes(t *testing.T) {
 	}
 }
 
-func TestPatternDependency_AllFields(t *testing.T) {
-	dep := PatternDependency{
+func TestDependency_AllFields(t *testing.T) {
+	dep := Dependency{
 		Name:     "base-pattern",
 		Version:  ">=1.0.0",
 		Optional: true,

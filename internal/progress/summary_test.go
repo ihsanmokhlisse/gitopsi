@@ -258,7 +258,7 @@ func TestClusterInfo_StatusValues(t *testing.T) {
 
 // Tests for GitOpsToolInfo struct
 
-func TestGitOpsToolInfo_AllFields(t *testing.T) {
+func TestGitOpsToolInfo_AllFields_Summary(t *testing.T) {
 	tool := GitOpsToolInfo{
 		Name:           "argocd",
 		URL:            "https://argocd.example.com",

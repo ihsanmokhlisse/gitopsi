@@ -273,7 +273,7 @@ func TestIntegration_MultiCluster_ClusterPerEnvTopology(t *testing.T) {
 			secretFile := filepath.Join(clustersDir, env.Name+"-cluster.yaml")
 			if _, err := os.Stat(secretFile); err == nil {
 				content, _ := os.ReadFile(secretFile)
-				assert.Contains(t, string(content), env.ClusterURL, "Cluster secret should contain cluster URL")
+				assert.Contains(t, string(content), env.Cluster, "Cluster secret should contain cluster URL")
 			}
 		}
 	}

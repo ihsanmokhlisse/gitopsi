@@ -806,37 +806,36 @@ func TestOrgCommandExists(t *testing.T) {
 
 func TestTruncate_ZeroMaxLen(t *testing.T) {
 	result := truncate("hello", 0)
-	// With maxLen=0, s[:0-3] would be negative, should handle gracefully
-	// The current implementation would panic or return unexpected result
-	// Testing current behavior
-	if len(result) > 0 {
-		// Just verify it doesn't panic
+	if result != "" {
+		t.Errorf("Expected empty string for maxLen=0, got %q", result)
+	}
+}
+
+func TestTruncate_NegativeMaxLen(t *testing.T) {
+	result := truncate("hello", -5)
+	if result != "" {
+		t.Errorf("Expected empty string for negative maxLen, got %q", result)
 	}
 }
 
 func TestTruncate_MaxLenOne(t *testing.T) {
 	result := truncate("hello", 1)
-	// With maxLen=1, s[:1-3] = s[:-2] would be negative
-	// Testing current behavior
-	if len(result) > 1 {
-		t.Errorf("Expected max length 1, got %d", len(result))
+	if result != "h" {
+		t.Errorf("Expected 'h' for maxLen=1, got %q", result)
 	}
 }
 
 func TestTruncate_MaxLenTwo(t *testing.T) {
 	result := truncate("hello", 2)
-	// With maxLen=2, s[:2-3] = s[:-1] would be negative
-	if len(result) > 2 {
-		t.Errorf("Expected max length 2, got %d", len(result))
+	if result != "he" {
+		t.Errorf("Expected 'he' for maxLen=2, got %q", result)
 	}
 }
 
 func TestTruncate_MaxLenThree(t *testing.T) {
 	result := truncate("hello", 3)
-	// With maxLen=3, s[:3-3] = s[:0] = ""
-	// Current implementation returns empty string + "..."
-	if result != "..." {
-		t.Logf("truncate(hello, 3) = %q", result)
+	if result != "hel" {
+		t.Errorf("Expected 'hel' for maxLen=3, got %q", result)
 	}
 }
 

@@ -653,13 +653,13 @@ func TestSaveSummary_FileContent(t *testing.T) {
 }
 
 func TestSaveSummary_InvalidPath(t *testing.T) {
-	// Use a path that will fail to create
-	invalidPath := "/nonexistent/path/that/does/not/exist"
+	// Use a path with null byte which is invalid on all platforms
+	invalidPath := "/path/with\x00null/byte"
 
 	summary := &SetupSummary{}
 	err := SaveSummary(invalidPath, summary)
 	if err == nil {
-		t.Error("SaveSummary() should error for invalid path")
+		t.Error("SaveSummary() should error for path with invalid characters")
 	}
 }
 

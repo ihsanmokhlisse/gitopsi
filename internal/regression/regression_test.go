@@ -1603,6 +1603,9 @@ func TestRegression_59_ReadmeHasValidContent(t *testing.T) {
 		Infra: config.Infrastructure{
 			Namespaces: true,
 		},
+		Docs: config.Documentation{
+			Readme: true,
+		},
 	}
 
 	writer := output.New(tmpDir, false, false)

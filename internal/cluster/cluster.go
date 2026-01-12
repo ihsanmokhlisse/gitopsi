@@ -283,7 +283,7 @@ func (c *Cluster) buildKubectlArgs(args ...string) []string {
 	// Add authentication args
 	if c.auth != nil {
 		switch c.auth.Method {
-		case AuthKubeconfig:
+		case AuthKubeconfig, AuthOIDC:
 			if c.auth.Kubeconfig != "" {
 				result = append(result, "--kubeconfig", c.auth.Kubeconfig)
 			}

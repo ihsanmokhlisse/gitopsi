@@ -99,8 +99,11 @@ func New(opts *Options) *Validator {
 }
 
 func (v *Validator) Validate(ctx context.Context) (*ValidationResult, error) {
-	if _, err := os.Stat(v.opts.Path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("path does not exist: %s", v.opts.Path)
+	if _, err := os.Stat(v.opts.Path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("path does not exist: %s", v.opts.Path)
+		}
+		return nil, fmt.Errorf("failed to access path %s: %w", v.opts.Path, err)
 	}
 
 	result := &ValidationResult{

@@ -85,7 +85,7 @@ func TestValidateNonExistentPath(t *testing.T) {
 	v := New(opts)
 
 	_, err := v.Validate(ctx)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not exist")
 }
 

@@ -1088,14 +1088,18 @@ func TestSaveSummary_NestedDirCreation(t *testing.T) {
 	tempDir := t.TempDir()
 	projectPath := filepath.Join(tempDir, "deep", "nested", "path", "test-project")
 
-	// Don't create parent directories - SaveSummary should fail
+	// SaveSummary uses MkdirAll which creates all parent directories
 	summary := &SetupSummary{}
 
-	// This should succeed because SaveSummary creates .gitopsi inside projectPath
-	// but projectPath itself must exist
 	err := SaveSummary(projectPath, summary)
-	if err == nil {
-		t.Error("Expected error when parent directories don't exist")
+	if err != nil {
+		t.Errorf("SaveSummary() should create nested directories, got error: %v", err)
+	}
+
+	// Verify the file was created
+	summaryPath := filepath.Join(projectPath, ".gitopsi", "setup-summary.yaml")
+	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
+		t.Error("Summary file should exist after SaveSummary")
 	}
 }
 

@@ -596,3 +596,650 @@ func TestManifestConfig_Fields(t *testing.T) {
 		t.Errorf("Namespace = %v, want custom-ns", cfg.Namespace)
 	}
 }
+
+func TestGetArgoCDHelmConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:    ToolArgoCD,
+		Mode:    ModeHelm,
+		Version: "2.9.0",
+	})
+
+	cfg := b.getArgoCDHelmConfig()
+	if cfg.Repo != "https://argoproj.github.io/argo-helm" {
+		t.Errorf("Default Repo = %s, want https://argoproj.github.io/argo-helm", cfg.Repo)
+	}
+	if cfg.Chart != "argo-cd" {
+		t.Errorf("Default Chart = %s, want argo-cd", cfg.Chart)
+	}
+	if cfg.Version != "2.9.0" {
+		t.Errorf("Version = %s, want 2.9.0", cfg.Version)
+	}
+}
+
+func TestGetArgoCDHelmConfig_Custom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			Repo:    "https://custom.repo.io",
+			Chart:   "custom-argocd",
+			Version: "1.0.0",
+		},
+	})
+
+	cfg := b.getArgoCDHelmConfig()
+	if cfg.Repo != "https://custom.repo.io" {
+		t.Errorf("Custom Repo = %s, want https://custom.repo.io", cfg.Repo)
+	}
+	if cfg.Chart != "custom-argocd" {
+		t.Errorf("Custom Chart = %s, want custom-argocd", cfg.Chart)
+	}
+}
+
+func TestGetArgoCDHelmConfig_PartialCustom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			// Repo and Chart are empty - should use defaults
+		},
+	})
+
+	cfg := b.getArgoCDHelmConfig()
+	if cfg.Repo != "https://argoproj.github.io/argo-helm" {
+		t.Errorf("Repo should use default, got %s", cfg.Repo)
+	}
+	if cfg.Chart != "argo-cd" {
+		t.Errorf("Chart should use default, got %s", cfg.Chart)
+	}
+}
+
+func TestGetFluxHelmConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:    ToolFlux,
+		Mode:    ModeHelm,
+		Version: "2.0.0",
+	})
+
+	cfg := b.getFluxHelmConfig()
+	if cfg.Repo != "https://fluxcd-community.github.io/helm-charts" {
+		t.Errorf("Default Repo = %s, want https://fluxcd-community.github.io/helm-charts", cfg.Repo)
+	}
+	if cfg.Chart != "flux2" {
+		t.Errorf("Default Chart = %s, want flux2", cfg.Chart)
+	}
+}
+
+func TestGetFluxHelmConfig_Custom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolFlux,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			Repo:    "https://custom.flux.io",
+			Chart:   "custom-flux",
+			Version: "2.0.0",
+		},
+	})
+
+	cfg := b.getFluxHelmConfig()
+	if cfg.Repo != "https://custom.flux.io" {
+		t.Errorf("Custom Repo = %s, want https://custom.flux.io", cfg.Repo)
+	}
+	if cfg.Chart != "custom-flux" {
+		t.Errorf("Custom Chart = %s, want custom-flux", cfg.Chart)
+	}
+}
+
+func TestGetFluxHelmConfig_PartialCustom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolFlux,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			// Empty - should use defaults
+		},
+	})
+
+	cfg := b.getFluxHelmConfig()
+	if cfg.Repo != "https://fluxcd-community.github.io/helm-charts" {
+		t.Errorf("Repo should use default, got %s", cfg.Repo)
+	}
+	if cfg.Chart != "flux2" {
+		t.Errorf("Chart should use default, got %s", cfg.Chart)
+	}
+}
+
+func TestGetArgoCDOLMConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeOLM,
+	})
+
+	cfg := b.getArgoCDOLMConfig()
+	if cfg.Channel != "alpha" {
+		t.Errorf("Default Channel = %s, want alpha", cfg.Channel)
+	}
+	if cfg.Source != "community-operators" {
+		t.Errorf("Default Source = %s, want community-operators", cfg.Source)
+	}
+	if cfg.SourceNamespace != "openshift-marketplace" {
+		t.Errorf("Default SourceNamespace = %s, want openshift-marketplace", cfg.SourceNamespace)
+	}
+	if cfg.Approval != "Automatic" {
+		t.Errorf("Default Approval = %s, want Automatic", cfg.Approval)
+	}
+}
+
+func TestGetArgoCDOLMConfig_Custom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeOLM,
+		OLM: &OLMConfig{
+			Channel:         "stable",
+			Source:          "custom-catalog",
+			SourceNamespace: "custom-ns",
+			Approval:        "Manual",
+		},
+	})
+
+	cfg := b.getArgoCDOLMConfig()
+	if cfg.Channel != "stable" {
+		t.Errorf("Custom Channel = %s, want stable", cfg.Channel)
+	}
+	if cfg.Source != "custom-catalog" {
+		t.Errorf("Custom Source = %s, want custom-catalog", cfg.Source)
+	}
+}
+
+func TestGetArgoCDOLMConfig_PartialCustom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeOLM,
+		OLM: &OLMConfig{
+			// All empty - should use defaults
+		},
+	})
+
+	cfg := b.getArgoCDOLMConfig()
+	if cfg.Channel != "alpha" {
+		t.Errorf("Channel should use default, got %s", cfg.Channel)
+	}
+	if cfg.Source != "community-operators" {
+		t.Errorf("Source should use default, got %s", cfg.Source)
+	}
+}
+
+func TestGetArgoCDManifestConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:    ToolArgoCD,
+		Mode:    ModeManifest,
+		Version: "v2.9.0",
+	})
+
+	cfg := b.getArgoCDManifestConfig()
+	expectedURL := "https://raw.githubusercontent.com/argoproj/argo-cd/v2.9.0/manifests/install.yaml"
+	if cfg.URL != expectedURL {
+		t.Errorf("URL = %s, want %s", cfg.URL, expectedURL)
+	}
+}
+
+func TestGetArgoCDManifestConfig_DefaultVersion(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeManifest,
+		// No version specified
+	})
+
+	cfg := b.getArgoCDManifestConfig()
+	expectedURL := "https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+	if cfg.URL != expectedURL {
+		t.Errorf("URL = %s, want %s", cfg.URL, expectedURL)
+	}
+}
+
+func TestGetArgoCDManifestConfig_Custom(t *testing.T) {
+	customURL := "https://example.com/argocd/install.yaml"
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeManifest,
+		Manifest: &ManifestConfig{
+			URL: customURL,
+		},
+	})
+
+	cfg := b.getArgoCDManifestConfig()
+	if cfg.URL != customURL {
+		t.Errorf("URL = %s, want %s", cfg.URL, customURL)
+	}
+}
+
+func TestGetArgoCDKustomizeConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeKustomize,
+	})
+
+	cfg := b.getArgoCDKustomizeConfig()
+	if cfg.URL != "https://github.com/argoproj/argo-cd/manifests/cluster-install" {
+		t.Errorf("URL = %s, want default ArgoCD kustomize URL", cfg.URL)
+	}
+	if cfg.Path != "cluster-install" {
+		t.Errorf("Path = %s, want cluster-install", cfg.Path)
+	}
+}
+
+func TestGetArgoCDKustomizeConfig_Custom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeKustomize,
+		Kustomize: &KustomizeConfig{
+			URL:  "https://custom.kustomize.io/argocd",
+			Path: "overlays/prod",
+		},
+	})
+
+	cfg := b.getArgoCDKustomizeConfig()
+	if cfg.URL != "https://custom.kustomize.io/argocd" {
+		t.Errorf("URL = %s, want https://custom.kustomize.io/argocd", cfg.URL)
+	}
+}
+
+func TestGetFluxKustomizeConfig_Default(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolFlux,
+		Mode: ModeKustomize,
+	})
+
+	cfg := b.getFluxKustomizeConfig()
+	if cfg.URL != "https://github.com/fluxcd/flux2/manifests/install" {
+		t.Errorf("URL = %s, want default Flux kustomize URL", cfg.URL)
+	}
+	if cfg.Path != "install" {
+		t.Errorf("Path = %s, want install", cfg.Path)
+	}
+}
+
+func TestGetFluxKustomizeConfig_Custom(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolFlux,
+		Mode: ModeKustomize,
+		Kustomize: &KustomizeConfig{
+			URL:  "https://custom.kustomize.io/flux",
+			Path: "overlays/staging",
+		},
+	})
+
+	cfg := b.getFluxKustomizeConfig()
+	if cfg.URL != "https://custom.kustomize.io/flux" {
+		t.Errorf("URL = %s, want https://custom.kustomize.io/flux", cfg.URL)
+	}
+}
+
+func TestDefaultHelmConfig_UnknownTool(t *testing.T) {
+	cfg := DefaultHelmConfig(Tool("unknown"))
+	if cfg != nil {
+		t.Errorf("DefaultHelmConfig should return nil for unknown tool, got %v", cfg)
+	}
+}
+
+func TestModeDescription_Unknown(t *testing.T) {
+	desc := ModeDescription(Mode("unknown"))
+	// Unknown mode returns just the mode name
+	if desc != "unknown" {
+		t.Errorf("ModeDescription for unknown = %s, want 'unknown'", desc)
+	}
+}
+
+func TestSuggestMode_GKE(t *testing.T) {
+	mode := SuggestMode(ToolArgoCD, "gke")
+	if mode != ModeHelm {
+		t.Errorf("SuggestMode for GKE = %v, want ModeHelm", mode)
+	}
+}
+
+func TestBootstrapper_Nil_Cluster(t *testing.T) {
+	// Should not panic with nil cluster
+	b := New(nil, &Options{
+		Tool:      ToolArgoCD,
+		Namespace: "argocd",
+	})
+
+	if b.GetTool() != ToolArgoCD {
+		t.Errorf("GetTool() = %v, want %v", b.GetTool(), ToolArgoCD)
+	}
+	if b.cluster != nil {
+		t.Error("cluster should be nil")
+	}
+}
+
+func TestOptions_WithModeConfigs(t *testing.T) {
+	opts := &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			Repo:  "https://custom.repo.io",
+			Chart: "custom-chart",
+		},
+		OLM: &OLMConfig{
+			Channel: "stable",
+		},
+		Manifest: &ManifestConfig{
+			URL: "https://custom.manifest.io",
+		},
+		Kustomize: &KustomizeConfig{
+			URL: "https://custom.kustomize.io",
+		},
+	}
+
+	b := New(nil, opts)
+
+	if b.options.Helm == nil {
+		t.Error("Helm config should not be nil")
+	}
+	if b.options.OLM == nil {
+		t.Error("OLM config should not be nil")
+	}
+	if b.options.Manifest == nil {
+		t.Error("Manifest config should not be nil")
+	}
+	if b.options.Kustomize == nil {
+		t.Error("Kustomize config should not be nil")
+	}
+}
+
+func TestNamespace_Preserved(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:      ToolArgoCD,
+		Namespace: "openshift-gitops",
+	})
+
+	if b.GetNamespace() != "openshift-gitops" {
+		t.Errorf("Namespace = %s, want openshift-gitops", b.GetNamespace())
+	}
+}
+
+func TestValidModes_AKS(t *testing.T) {
+	modes := ValidModes(ToolArgoCD, "aks")
+	hasOLM := false
+	for _, m := range modes {
+		if m == ModeOLM {
+			hasOLM = true
+			break
+		}
+	}
+	if hasOLM {
+		t.Error("ValidModes for AKS should not include OLM")
+	}
+}
+
+func TestValidModes_FluxOnOpenShift(t *testing.T) {
+	modes := ValidModes(ToolFlux, "openshift")
+	hasOLM := false
+	for _, m := range modes {
+		if m == ModeOLM {
+			hasOLM = true
+			break
+		}
+	}
+	if hasOLM {
+		t.Error("ValidModes for Flux on OpenShift should not include OLM")
+	}
+}
+
+func TestIsValidMode_ManifestOnEKS(t *testing.T) {
+	if !IsValidMode(ModeManifest, ToolArgoCD, "eks") {
+		t.Error("Manifest mode should be valid for ArgoCD on EKS")
+	}
+}
+
+func TestIsValidMode_KustomizeOnAKS(t *testing.T) {
+	if !IsValidMode(ModeKustomize, ToolArgoCD, "aks") {
+		t.Error("Kustomize mode should be valid for ArgoCD on AKS")
+	}
+}
+
+func TestIsValidMode_InvalidMode(t *testing.T) {
+	if IsValidMode(Mode("invalid"), ToolArgoCD, "kubernetes") {
+		t.Error("Invalid mode should not be valid")
+	}
+}
+
+func TestModeDescription_EmptyMode(t *testing.T) {
+	desc := ModeDescription(Mode(""))
+	if desc != "" {
+		t.Errorf("ModeDescription for empty mode = %s, want empty string", desc)
+	}
+}
+
+func TestDefaultHelmConfig_EmptyTool(t *testing.T) {
+	cfg := DefaultHelmConfig(Tool(""))
+	if cfg != nil {
+		t.Error("DefaultHelmConfig for empty tool should return nil")
+	}
+}
+
+func TestNew_ZeroTimeout(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:    ToolFlux,
+		Timeout: 0,
+	})
+
+	if b.options.Timeout != 300 {
+		t.Errorf("Zero timeout should default to 300, got %d", b.options.Timeout)
+	}
+}
+
+func TestNew_NegativeTimeout(t *testing.T) {
+	b := New(nil, &Options{
+		Tool:    ToolArgoCD,
+		Timeout: -1,
+	})
+
+	// Negative timeout is preserved (no validation in New)
+	if b.options.Timeout != -1 {
+		t.Errorf("Negative timeout = %d, want -1", b.options.Timeout)
+	}
+}
+
+func TestOptions_EmptyRepoURL(t *testing.T) {
+	opts := &Options{
+		Tool:          ToolArgoCD,
+		ConfigureRepo: true,
+		RepoURL:       "",
+	}
+
+	b := New(nil, opts)
+	if b.options.RepoURL != "" {
+		t.Errorf("RepoURL = %s, want empty", b.options.RepoURL)
+	}
+}
+
+func TestOptions_RepoBranchDefault(t *testing.T) {
+	opts := &Options{
+		Tool:       ToolArgoCD,
+		RepoBranch: "",
+	}
+
+	b := New(nil, opts)
+	// RepoBranch defaults are handled at runtime in createArgoCDAppOfApps
+	if b.options.RepoBranch != "" {
+		t.Errorf("RepoBranch = %s, want empty (defaults applied at runtime)", b.options.RepoBranch)
+	}
+}
+
+func TestHelmConfig_EmptySetValues(t *testing.T) {
+	cfg := &HelmConfig{
+		Repo:      "https://charts.example.com",
+		Chart:     "my-chart",
+		SetValues: nil,
+	}
+
+	if cfg.SetValues != nil {
+		t.Error("SetValues should be nil")
+	}
+}
+
+func TestHelmConfig_EmptyValues(t *testing.T) {
+	cfg := &HelmConfig{
+		Repo:   "https://charts.example.com",
+		Chart:  "my-chart",
+		Values: nil,
+	}
+
+	if cfg.Values != nil {
+		t.Error("Values should be nil")
+	}
+}
+
+func TestManifestConfig_EmptyPaths(t *testing.T) {
+	cfg := &ManifestConfig{
+		URL:   "https://example.com/install.yaml",
+		Paths: nil,
+	}
+
+	if cfg.Paths != nil {
+		t.Error("Paths should be nil")
+	}
+}
+
+func TestKustomizeConfig_EmptyPatches(t *testing.T) {
+	cfg := &KustomizeConfig{
+		URL:     "https://github.com/example/repo",
+		Path:    "overlays/prod",
+		Patches: nil,
+	}
+
+	if cfg.Patches != nil {
+		t.Error("Patches should be nil")
+	}
+}
+
+func TestResult_EmptyFields(t *testing.T) {
+	result := &Result{}
+
+	if result.Tool != "" {
+		t.Errorf("Tool = %v, want empty", result.Tool)
+	}
+	if result.URL != "" {
+		t.Errorf("URL = %s, want empty", result.URL)
+	}
+	if result.Username != "" {
+		t.Errorf("Username = %s, want empty", result.Username)
+	}
+	if result.Password != "" {
+		t.Errorf("Password = %s, want empty", result.Password)
+	}
+	if result.Namespace != "" {
+		t.Errorf("Namespace = %s, want empty", result.Namespace)
+	}
+	if result.Ready {
+		t.Error("Ready should be false by default")
+	}
+	if result.Message != "" {
+		t.Errorf("Message = %s, want empty", result.Message)
+	}
+}
+
+func TestGetArgoCDHelmConfig_CustomSetValues(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			SetValues: map[string]string{
+				"server.insecure":   "true",
+				"controller.replicas": "2",
+			},
+		},
+	})
+
+	cfg := b.getArgoCDHelmConfig()
+	if cfg.SetValues["server.insecure"] != "true" {
+		t.Errorf("SetValues[server.insecure] = %s, want true", cfg.SetValues["server.insecure"])
+	}
+	if cfg.SetValues["controller.replicas"] != "2" {
+		t.Errorf("SetValues[controller.replicas] = %s, want 2", cfg.SetValues["controller.replicas"])
+	}
+}
+
+func TestGetFluxHelmConfig_CustomSetValues(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolFlux,
+		Mode: ModeHelm,
+		Helm: &HelmConfig{
+			SetValues: map[string]string{
+				"installCRDs": "true",
+			},
+		},
+	})
+
+	cfg := b.getFluxHelmConfig()
+	if cfg.SetValues["installCRDs"] != "true" {
+		t.Errorf("SetValues[installCRDs] = %s, want true", cfg.SetValues["installCRDs"])
+	}
+}
+
+func TestSuggestMode_UnknownPlatform(t *testing.T) {
+	mode := SuggestMode(ToolArgoCD, "unknown-platform")
+	if mode != ModeHelm {
+		t.Errorf("SuggestMode for unknown platform = %v, want ModeHelm", mode)
+	}
+}
+
+func TestSuggestMode_EmptyPlatform(t *testing.T) {
+	mode := SuggestMode(ToolArgoCD, "")
+	if mode != ModeHelm {
+		t.Errorf("SuggestMode for empty platform = %v, want ModeHelm", mode)
+	}
+}
+
+func TestValidModes_EmptyPlatform(t *testing.T) {
+	modes := ValidModes(ToolArgoCD, "")
+	if len(modes) < 3 {
+		t.Errorf("Expected at least 3 modes for empty platform, got %d", len(modes))
+	}
+	// Should not include OLM for non-openshift
+	hasOLM := false
+	for _, m := range modes {
+		if m == ModeOLM {
+			hasOLM = true
+			break
+		}
+	}
+	if hasOLM {
+		t.Error("ValidModes for empty platform should not include OLM")
+	}
+}
+
+func TestGetArgoCDOLMConfig_PartialWithApproval(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeOLM,
+		OLM: &OLMConfig{
+			Approval: "Manual",
+			// Others empty - should use defaults
+		},
+	})
+
+	cfg := b.getArgoCDOLMConfig()
+	if cfg.Approval != "Manual" {
+		t.Errorf("Approval = %s, want Manual", cfg.Approval)
+	}
+	if cfg.Channel != "alpha" {
+		t.Errorf("Channel should default to alpha, got %s", cfg.Channel)
+	}
+}
+
+func TestGetArgoCDManifestConfig_WithPaths(t *testing.T) {
+	b := New(nil, &Options{
+		Tool: ToolArgoCD,
+		Mode: ModeManifest,
+		Manifest: &ManifestConfig{
+			URL:   "https://example.com/install.yaml",
+			Paths: []string{"/path/to/extra1.yaml", "/path/to/extra2.yaml"},
+		},
+	})
+
+	cfg := b.getArgoCDManifestConfig()
+	if len(cfg.Paths) != 2 {
+		t.Errorf("Paths length = %d, want 2", len(cfg.Paths))
+	}
+}

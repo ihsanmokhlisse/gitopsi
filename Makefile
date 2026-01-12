@@ -8,7 +8,7 @@ CONTAINER_ENGINE=podman
 IMAGE_NAME=gitopsi
 IMAGE_TAG=dev
 
-COVERAGE_THRESHOLD=40
+COVERAGE_THRESHOLD=50
 
 PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
@@ -114,6 +114,27 @@ coverage-check: test-coverage ## Check coverage meets threshold
 
 test-e2e: ## Run end-to-end tests
 	go test -v -tags=e2e ./test/e2e/...
+
+test-e2e-init: ## Run E2E tests for init command only
+	go test -v -tags=e2e -run "TestInit" ./test/e2e/...
+
+test-e2e-cluster: ## Run E2E tests that require a cluster
+	E2E_CLUSTER=1 go test -v -tags=e2e -run "TestCluster|TestArgoCD" ./test/e2e/...
+
+test-e2e-errors: ## Run E2E error scenario tests
+	go test -v -tags=e2e -run "TestInit.*Invalid|TestInit.*Missing|TestInit.*Error" ./test/e2e/...
+
+test-e2e-multienv: ## Run E2E multi-environment tests
+	go test -v -tags=e2e -run "TestMulti|TestCrossEnv" ./test/e2e/...
+
+test-e2e-marketplace: ## Run E2E marketplace CLI tests (no cluster)
+	go test -v -tags=e2e -run "TestMarketplace(Help|List|Search|Categories)" ./test/e2e/...
+
+test-e2e-marketplace-flow: ## Run E2E marketplace flow tests (requires cluster + ArgoCD)
+	E2E_CLUSTER=1 E2E_ARGOCD=1 E2E_MARKETPLACE_FLOW=1 go test -v -tags=e2e -run "TestMarketplace(Full|Pattern|Multiple)" ./test/e2e/... -timeout 15m
+
+test-e2e-verbose: ## Run E2E tests with verbose output
+	E2E_VERBOSE=1 go test -v -tags=e2e ./test/e2e/... -timeout 10m
 
 test-all: test-unit test-integration test-regression ## Run all test types
 	@echo "✅ All tests passed"

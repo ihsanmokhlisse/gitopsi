@@ -1,0 +1,147 @@
+# E2E Test Matrix Configuration
+# This file defines the test matrix for cross-environment E2E testing
+
+version: "1.0"
+
+# Test environments to validate
+environments:
+  - id: local-kind
+    name: Local Kind Cluster
+    type: kind
+    kubeconfig: ""  # Auto-generated
+    skip_if_no_docker: true
+
+  - id: remote-eks
+    name: AWS EKS Cluster
+    type: eks
+    kubeconfig: "${EKS_KUBECONFIG}"
+    platform: eks
+    skip_if_no_env: true
+
+  - id: remote-aks
+    name: Azure AKS Cluster
+    type: aks
+    kubeconfig: "${AKS_KUBECONFIG}"
+    platform: aks
+    skip_if_no_env: true
+
+  - id: openshift
+    name: OpenShift Cluster
+    type: openshift
+    kubeconfig: "${OPENSHIFT_KUBECONFIG}"
+    platform: openshift
+    skip_if_no_env: true
+
+# Test configurations to run
+test_configs:
+  - id: minimal
+    name: Minimal Preset
+    config_file: minimal-config.yaml
+    preset: minimal
+    environments: ["local-kind"]
+    timeout: 5m
+
+  - id: standard
+    name: Standard Preset
+    config_file: standard-config.yaml
+    preset: standard
+    environments: ["local-kind", "remote-eks"]
+    timeout: 10m
+
+  - id: enterprise
+    name: Enterprise Preset
+    config_file: enterprise-config.yaml
+    preset: enterprise
+    environments: ["local-kind", "remote-eks", "remote-aks"]
+    timeout: 15m
+
+  - id: multi-cluster
+    name: Multi-Cluster Setup
+    config_file: multi-cluster-config.yaml
+    preset: standard
+    environments: ["local-kind"]
+    timeout: 20m
+
+  - id: openshift-gitops
+    name: OpenShift GitOps
+    config_file: openshift-config.yaml
+    preset: standard
+    platform: openshift
+    environments: ["openshift"]
+    timeout: 15m
+
+# Test phases to execute
+phases:
+  - id: generate
+    name: Generate Manifests
+    required: true
+    commands:
+      - gitopsi init --config {config_file} --output {output_dir}
+
+  - id: validate
+    name: Validate Manifests
+    required: true
+    commands:
+      - gitopsi validate {output_dir}/{project_name}
+      - kustomize build {output_dir}/{project_name}/infrastructure/overlays/dev
+
+  - id: bootstrap
+    name: Bootstrap GitOps
+    required_env: true
+    commands:
+      - gitopsi init --config {config_file} --output {output_dir} --bootstrap
+
+  - id: sync
+    name: Sync and Verify
+    required_env: true
+    depends_on: [bootstrap]
+    commands:
+      - argocd app sync {app_name}
+      - argocd app wait {app_name} --sync --timeout 300
+
+  - id: day2
+    name: Day-2 Operations
+    required_env: true
+    depends_on: [sync]
+    commands:
+      - git add -A && git commit -m "Day-2 changes" && git push
+      - argocd app sync {app_name}
+
+# Validation checks
+validations:
+  - id: structure
+    name: Validate Directory Structure
+    type: directory_exists
+    paths:
+      - infrastructure/base
+      - infrastructure/overlays
+      - argocd
+      - docs
+
+  - id: kustomize
+    name: Validate Kustomize Build
+    type: command
+    command: kustomize build {path}
+    expect_success: true
+
+  - id: yaml_valid
+    name: Validate YAML Syntax
+    type: yaml_valid
+    glob: "**/*.yaml"
+
+  - id: no_hardcoded_secrets
+    name: Check for Hardcoded Secrets
+    type: grep_not_found
+    patterns:
+      - "password:"
+      - "secret:"
+      - "apiKey:"
+
+# Cleanup configuration
+cleanup:
+  always_cleanup: true
+  preserve_on_failure: true
+  cleanup_commands:
+    - kubectl delete namespace {namespace} --ignore-not-found
+    - argocd app delete {app_name} --yes || true
+    - git push origin --delete {branch} || true

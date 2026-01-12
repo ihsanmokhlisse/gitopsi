@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1774,5 +1775,2032 @@ func TestGenerateCompleteProject(t *testing.T) {
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			t.Errorf("Expected item not created: %s", item)
 		}
+	}
+}
+
+// Multi-cluster ArgoCD Tests
+
+func TestGenerateMultiClusterArgoCD_ClusterPerEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-cluster-per-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{
+				Name: "nonprod",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-cluster", URL: "https://dev.k8s.local:6443", Region: "us-east-1", Primary: true},
+				},
+			},
+			{
+				Name: "prod",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "prod-cluster", URL: "https://prod.k8s.local:6443", Region: "us-west-2", Primary: true},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Verify cluster secrets are created
+	expectedSecrets := []string{
+		"mc-cluster-per-env/argocd/clusters/dev-cluster.yaml",
+		"mc-cluster-per-env/argocd/clusters/prod-cluster.yaml",
+	}
+
+	for _, file := range expectedSecrets {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Cluster secret not created: %s", file)
+		}
+	}
+
+	// Verify cluster-per-env applicationsets are created
+	expectedAppSets := []string{
+		"mc-cluster-per-env/argocd/applicationsets/infra-nonprod-cluster.yaml",
+		"mc-cluster-per-env/argocd/applicationsets/infra-prod-cluster.yaml",
+		"mc-cluster-per-env/argocd/applicationsets/apps-nonprod-cluster.yaml",
+		"mc-cluster-per-env/argocd/applicationsets/apps-prod-cluster.yaml",
+	}
+
+	for _, file := range expectedAppSets {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("ApplicationSet not created: %s", file)
+		}
+	}
+
+	// Verify cluster secret content
+	secretContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-cluster-per-env/argocd/clusters/dev-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read cluster secret: %v", err)
+	}
+
+	secretChecks := []string{
+		"kind: Secret",
+		"name: dev-cluster",
+		"argocd.argoproj.io/secret-type: cluster",
+		"env: nonprod",
+		"region: us-east-1",
+		"primary: \"true\"",
+		"server: https://dev.k8s.local:6443",
+	}
+
+	for _, check := range secretChecks {
+		if !strings.Contains(string(secretContent), check) {
+			t.Errorf("Cluster secret missing: %s", check)
+		}
+	}
+
+	// Verify applicationset content
+	appSetContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-cluster-per-env/argocd/applicationsets/infra-nonprod-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read applicationset: %v", err)
+	}
+
+	appSetChecks := []string{
+		"kind: ApplicationSet",
+		"name: mc-cluster-per-env-infra-nonprod",
+		"clusters:",
+		"matchLabels:",
+		"env: nonprod",
+		"project: infrastructure",
+		"repoURL: https://github.com/test/repo.git",
+	}
+
+	for _, check := range appSetChecks {
+		if !strings.Contains(string(appSetContent), check) {
+			t.Errorf("ApplicationSet missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_MultiCluster(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-multi-cluster"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyMultiCluster,
+		Output:     config.Output{URL: "https://github.com/test/repo.git", Branch: "main"},
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-us-east", URL: "https://dev-east.k8s.local:6443", Region: "us-east-1", Primary: true},
+					{Name: "dev-us-west", URL: "https://dev-west.k8s.local:6443", Region: "us-west-2"},
+				},
+			},
+			{
+				Name: "prod",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "prod-us-east", URL: "https://prod-east.k8s.local:6443", Region: "us-east-1", Primary: true},
+					{Name: "prod-eu-west", URL: "https://prod-eu.k8s.local:6443", Region: "eu-west-1"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Verify all cluster secrets are created
+	expectedSecrets := []string{
+		"mc-multi-cluster/argocd/clusters/dev-us-east.yaml",
+		"mc-multi-cluster/argocd/clusters/dev-us-west.yaml",
+		"mc-multi-cluster/argocd/clusters/prod-us-east.yaml",
+		"mc-multi-cluster/argocd/clusters/prod-eu-west.yaml",
+	}
+
+	for _, file := range expectedSecrets {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Cluster secret not created: %s", file)
+		}
+	}
+
+	// Verify multi-cluster applicationsets are created
+	expectedAppSets := []string{
+		"mc-multi-cluster/argocd/applicationsets/infra-multi-cluster.yaml",
+		"mc-multi-cluster/argocd/applicationsets/apps-multi-cluster.yaml",
+	}
+
+	for _, file := range expectedAppSets {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("ApplicationSet not created: %s", file)
+		}
+	}
+
+	// Verify multi-cluster applicationset content
+	appSetContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-multi-cluster/argocd/applicationsets/infra-multi-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read multi-cluster applicationset: %v", err)
+	}
+
+	appSetChecks := []string{
+		"kind: ApplicationSet",
+		"name: mc-multi-cluster-infra-multi-cluster",
+		"matrix:",
+		"generators:",
+		"list:",
+		"elements:",
+		"- env: dev",
+		"- env: prod",
+		"clusters:",
+		"project: infrastructure",
+		"repoURL: https://github.com/test/repo.git",
+		"targetRevision: main",
+	}
+
+	for _, check := range appSetChecks {
+		if !strings.Contains(string(appSetContent), check) {
+			t.Errorf("Multi-cluster ApplicationSet missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateClusterSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "cluster-secrets-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-primary", URL: "https://dev.k8s.local:6443", Region: "us-east-1", Primary: true},
+					{Name: "dev-secondary", URL: "https://dev2.k8s.local:6443", Region: "us-west-2"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateClusterSecrets("argocd")
+	if err != nil {
+		t.Fatalf("generateClusterSecrets() error = %v", err)
+	}
+
+	// Verify primary cluster secret
+	primaryContent, err := os.ReadFile(filepath.Join(tmpDir, "cluster-secrets-test/argocd/clusters/dev-primary.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read primary cluster secret: %v", err)
+	}
+
+	if !strings.Contains(string(primaryContent), "primary: \"true\"") {
+		t.Error("Primary cluster secret missing primary label")
+	}
+
+	if !strings.Contains(string(primaryContent), "region: us-east-1") {
+		t.Error("Primary cluster secret missing region label")
+	}
+
+	// Verify secondary cluster secret
+	secondaryContent, err := os.ReadFile(filepath.Join(tmpDir, "cluster-secrets-test/argocd/clusters/dev-secondary.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read secondary cluster secret: %v", err)
+	}
+
+	// Secondary should NOT have primary label
+	if strings.Contains(string(secondaryContent), "primary:") {
+		t.Error("Secondary cluster should not have primary label")
+	}
+
+	if !strings.Contains(string(secondaryContent), "region: us-west-2") {
+		t.Error("Secondary cluster secret missing region label")
+	}
+}
+
+func TestGenerateClusterPerEnvApplicationSets(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "cluster-per-env-appsets"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Output:     config.Output{Branch: "develop"},
+		Environments: []config.Environment{
+			{Name: "dev", Namespace: "my-app-dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateClusterPerEnvApplicationSets("argocd", "https://github.com/test/repo.git", "develop")
+	if err != nil {
+		t.Fatalf("generateClusterPerEnvApplicationSets() error = %v", err)
+	}
+
+	// Verify applicationsets for each environment and scope
+	expectedFiles := []string{
+		"cluster-per-env-appsets/argocd/applicationsets/infra-dev-cluster.yaml",
+		"cluster-per-env-appsets/argocd/applicationsets/apps-dev-cluster.yaml",
+		"cluster-per-env-appsets/argocd/applicationsets/infra-staging-cluster.yaml",
+		"cluster-per-env-appsets/argocd/applicationsets/apps-staging-cluster.yaml",
+		"cluster-per-env-appsets/argocd/applicationsets/infra-prod-cluster.yaml",
+		"cluster-per-env-appsets/argocd/applicationsets/apps-prod-cluster.yaml",
+	}
+
+	for _, file := range expectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("ApplicationSet not created: %s", file)
+		}
+	}
+
+	// Verify custom namespace is used
+	devContent, err := os.ReadFile(filepath.Join(tmpDir, "cluster-per-env-appsets/argocd/applicationsets/infra-dev-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read dev applicationset: %v", err)
+	}
+
+	if !strings.Contains(string(devContent), "namespace: my-app-dev") {
+		t.Error("Dev applicationset should use custom namespace")
+	}
+
+	if !strings.Contains(string(devContent), "targetRevision: develop") {
+		t.Error("ApplicationSet should use develop branch")
+	}
+}
+
+func TestGenerateMultiClusterApplicationSets(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-appsets"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyMultiCluster,
+		Environments: []config.Environment{
+			{Name: "dev", Namespace: "app-dev"},
+			{Name: "staging", Namespace: "app-staging"},
+			{Name: "prod", Namespace: "app-prod"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateMultiClusterApplicationSets("argocd", "https://github.com/test/repo.git", "main")
+	if err != nil {
+		t.Fatalf("generateMultiClusterApplicationSets() error = %v", err)
+	}
+
+	// Only two applicationsets should be created (one for infra, one for apps)
+	expectedFiles := []string{
+		"multi-appsets/argocd/applicationsets/infra-multi-cluster.yaml",
+		"multi-appsets/argocd/applicationsets/apps-multi-cluster.yaml",
+	}
+
+	for _, file := range expectedFiles {
+		fullPath := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Multi-cluster ApplicationSet not created: %s", file)
+		}
+	}
+
+	// Verify environment list in applicationset
+	infraContent, err := os.ReadFile(filepath.Join(tmpDir, "multi-appsets/argocd/applicationsets/infra-multi-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read infra applicationset: %v", err)
+	}
+
+	envChecks := []string{
+		"- env: dev",
+		"namespace: app-dev",
+		"- env: staging",
+		"namespace: app-staging",
+		"- env: prod",
+		"namespace: app-prod",
+	}
+
+	for _, check := range envChecks {
+		if !strings.Contains(string(infraContent), check) {
+			t.Errorf("Multi-cluster ApplicationSet missing: %s", check)
+		}
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_MissingGitURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-git-url"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-cluster", URL: "https://dev.k8s.local:6443"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err == nil {
+		t.Fatal("Expected error when git.url is missing for multi-cluster ArgoCD")
+	}
+
+	if !strings.Contains(err.Error(), "git.url is required") {
+		t.Errorf("Expected 'git.url is required' error, got: %v", err)
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_InfrastructureOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-infra-only"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{
+				Name: "prod",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "prod-cluster", URL: "https://prod.k8s.local:6443"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Infra applicationset should exist
+	infraPath := filepath.Join(tmpDir, "mc-infra-only/argocd/applicationsets/infra-prod-cluster.yaml")
+	if _, err := os.Stat(infraPath); os.IsNotExist(err) {
+		t.Error("Infrastructure applicationset should be created")
+	}
+
+	// Apps applicationset should NOT exist
+	appsPath := filepath.Join(tmpDir, "mc-infra-only/argocd/applicationsets/apps-prod-cluster.yaml")
+	if _, err := os.Stat(appsPath); !os.IsNotExist(err) {
+		t.Error("Application applicationset should not be created for infrastructure-only scope")
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_ApplicationOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-apps-only"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyMultiCluster,
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-cluster", URL: "https://dev.k8s.local:6443"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Apps applicationset should exist
+	appsPath := filepath.Join(tmpDir, "mc-apps-only/argocd/applicationsets/apps-multi-cluster.yaml")
+	if _, err := os.Stat(appsPath); os.IsNotExist(err) {
+		t.Error("Application applicationset should be created")
+	}
+
+	// Infra applicationset should NOT exist
+	infraPath := filepath.Join(tmpDir, "mc-apps-only/argocd/applicationsets/infra-multi-cluster.yaml")
+	if _, err := os.Stat(infraPath); !os.IsNotExist(err) {
+		t.Error("Infrastructure applicationset should not be created for application-only scope")
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_OpenShiftNamespace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-openshift"},
+		Platform:   "openshift",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "ocp-dev", URL: "https://api.ocp.local:6443"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Verify cluster secret uses openshift-gitops namespace
+	secretContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-openshift/argocd/clusters/ocp-dev.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read cluster secret: %v", err)
+	}
+
+	if !strings.Contains(string(secretContent), "namespace: openshift-gitops") {
+		t.Error("OpenShift cluster secret should use openshift-gitops namespace")
+	}
+
+	// Verify applicationset uses openshift-gitops namespace
+	appSetContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-openshift/argocd/applicationsets/infra-dev-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read applicationset: %v", err)
+	}
+
+	if !strings.Contains(string(appSetContent), "namespace: openshift-gitops") {
+		t.Error("OpenShift applicationset should use openshift-gitops namespace")
+	}
+}
+
+func TestGenerateMultiClusterArgoCD_CustomNamespace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mc-custom-ns"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Topology:   config.TopologyClusterPerEnv,
+		Bootstrap: config.BootstrapConfig{
+			Namespace: "my-argocd",
+		},
+		Output: config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{
+				Name: "dev",
+				Clusters: []config.EnvironmentCluster{
+					{Name: "dev-cluster", URL: "https://dev.k8s.local:6443"},
+				},
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() error = %v", err)
+	}
+
+	// Verify cluster secret uses custom namespace
+	secretContent, err := os.ReadFile(filepath.Join(tmpDir, "mc-custom-ns/argocd/clusters/dev-cluster.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read cluster secret: %v", err)
+	}
+
+	if !strings.Contains(string(secretContent), "namespace: my-argocd") {
+		t.Error("Cluster secret should use custom namespace")
+	}
+}
+
+func TestGenerateArgoCDNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		platform  string
+		bootstrap config.BootstrapConfig
+		expected  string
+	}{
+		{
+			name:      "kubernetes default",
+			platform:  "kubernetes",
+			bootstrap: config.BootstrapConfig{},
+			expected:  "argocd",
+		},
+		{
+			name:      "openshift default",
+			platform:  "openshift",
+			bootstrap: config.BootstrapConfig{},
+			expected:  "openshift-gitops",
+		},
+		{
+			name:      "eks default",
+			platform:  "eks",
+			bootstrap: config.BootstrapConfig{},
+			expected:  "argocd",
+		},
+		{
+			name:      "aks default",
+			platform:  "aks",
+			bootstrap: config.BootstrapConfig{},
+			expected:  "argocd",
+		},
+		{
+			name:      "custom namespace overrides kubernetes",
+			platform:  "kubernetes",
+			bootstrap: config.BootstrapConfig{Namespace: "custom-argocd"},
+			expected:  "custom-argocd",
+		},
+		{
+			name:      "custom namespace overrides openshift",
+			platform:  "openshift",
+			bootstrap: config.BootstrapConfig{Namespace: "my-gitops"},
+			expected:  "my-gitops",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:   config.Project{Name: "test"},
+				Platform:  tt.platform,
+				Bootstrap: tt.bootstrap,
+			}
+			writer := output.New("/tmp", true, false)
+			gen := New(cfg, writer, false)
+
+			got := gen.getArgoCDNamespace()
+			if got != tt.expected {
+				t.Errorf("getArgoCDNamespace() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNew_VerboseMode(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "verbose-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, true)
+
+	if !gen.Verbose {
+		t.Error("Verbose should be true")
+	}
+}
+
+func TestNew_VersionMapper_OpenShiftVersion(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "ocp-version-test"
+	cfg.Platform = "openshift"
+	cfg.Version.OpenShift = "4.14"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	if gen.VersionMapper == nil {
+		t.Error("VersionMapper should be initialized for OpenShift with version")
+	}
+}
+
+func TestNew_VersionMapper_KubernetesVersion(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "k8s-version-test"
+	cfg.Platform = "kubernetes"
+	cfg.Version.Kubernetes = "1.29"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	if gen.VersionMapper == nil {
+		t.Error("VersionMapper should be initialized for Kubernetes with version")
+	}
+}
+
+func TestGetAPIVersion_NilVersionMapper(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "nil-mapper-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+	gen.VersionMapper = nil
+
+	apiVersion := gen.GetAPIVersion("Namespace")
+	if apiVersion != "v1" {
+		t.Errorf("GetAPIVersion() = %s, want v1", apiVersion)
+	}
+}
+
+func TestGetAPIVersion_UnknownKind(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "unknown-kind-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+	gen.VersionMapper = nil
+
+	apiVersion := gen.GetAPIVersion("UnknownKindXYZ")
+	if apiVersion != "" {
+		t.Errorf("GetAPIVersion() for unknown kind = %s, want empty", apiVersion)
+	}
+}
+
+func TestCheckDeprecation_NilMapper(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "nil-mapper-dep-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+	gen.VersionMapper = nil
+
+	// Should not panic
+	gen.CheckDeprecation("Deployment", "apps/v1", "my-deployment", "test.yaml")
+
+	if len(gen.Deprecations) != 0 {
+		t.Errorf("Deprecations should be empty when VersionMapper is nil, got %d", len(gen.Deprecations))
+	}
+}
+
+func TestGetDeprecations_Empty(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "empty-dep-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	deps := gen.GetDeprecations()
+	if len(deps) != 0 {
+		t.Errorf("GetDeprecations() should return empty slice, got %d", len(deps))
+	}
+}
+
+func TestHasCriticalDeprecations_NoCritical(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "no-critical-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	if gen.HasCriticalDeprecations() {
+		t.Error("HasCriticalDeprecations() should be false with no deprecations")
+	}
+}
+
+func TestGenerateStructure_SingleEnvironment(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "single-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "production"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.generateStructure()
+	if err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	expectedDirs := []string{
+		"single-env/infrastructure/overlays/production",
+		"single-env/applications/overlays/production",
+	}
+
+	for _, dir := range expectedDirs {
+		fullPath := filepath.Join(tmpDir, dir)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Expected directory not created: %s", dir)
+		}
+	}
+}
+
+func TestGenerateStructure_InfrastructureOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "infra-only"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.generateStructure()
+	if err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	// Should have infrastructure dirs
+	infraDir := filepath.Join(tmpDir, "infra-only/infrastructure/overlays/dev")
+	if _, err := os.Stat(infraDir); os.IsNotExist(err) {
+		t.Error("Infrastructure directory not created")
+	}
+
+	// Should NOT have applications dirs
+	appsDir := filepath.Join(tmpDir, "infra-only/applications/overlays/dev")
+	if _, err := os.Stat(appsDir); !os.IsNotExist(err) {
+		t.Error("Applications directory should not be created for infrastructure-only scope")
+	}
+}
+
+func TestGenerateStructure_ApplicationOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "apps-only"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.generateStructure()
+	if err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	// Should have applications dirs
+	appsDir := filepath.Join(tmpDir, "apps-only/applications/overlays/dev")
+	if _, err := os.Stat(appsDir); os.IsNotExist(err) {
+		t.Error("Applications directory not created")
+	}
+
+	// Should NOT have infrastructure dirs
+	infraDir := filepath.Join(tmpDir, "apps-only/infrastructure/overlays/dev")
+	if _, err := os.Stat(infraDir); !os.IsNotExist(err) {
+		t.Error("Infrastructure directory should not be created for application-only scope")
+	}
+}
+
+func TestGenerateStructure_WithAllInfraOptions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "all-infra"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{Type: "local"},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.generateStructure()
+	if err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	expectedDirs := []string{
+		"all-infra/infrastructure/base/namespaces",
+		"all-infra/infrastructure/base/rbac",
+		"all-infra/infrastructure/base/network-policies",
+		"all-infra/infrastructure/base/resource-quotas",
+	}
+
+	for _, dir := range expectedDirs {
+		fullPath := filepath.Join(tmpDir, dir)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Expected directory not created: %s", dir)
+		}
+	}
+}
+
+func TestGenerateArgoCDNamespace_EmptyPlatform(t *testing.T) {
+	cfg := &config.Config{
+		Project:  config.Project{Name: "test"},
+		Platform: "",
+	}
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	ns := gen.getArgoCDNamespace()
+	if ns != "argocd" {
+		t.Errorf("getArgoCDNamespace() for empty platform = %s, want argocd", ns)
+	}
+}
+
+func TestGenerateArgoCDNamespace_GKEPlatform(t *testing.T) {
+	cfg := &config.Config{
+		Project:  config.Project{Name: "test"},
+		Platform: "gke",
+	}
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, false)
+
+	ns := gen.getArgoCDNamespace()
+	if ns != "argocd" {
+		t.Errorf("getArgoCDNamespace() for GKE = %s, want argocd", ns)
+	}
+}
+
+func TestGeneratorFields(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "field-test"
+
+	writer := output.New("/tmp", true, false)
+	gen := New(cfg, writer, true)
+
+	if gen.Config == nil {
+		t.Error("Config should not be nil")
+	}
+	if gen.Writer == nil {
+		t.Error("Writer should not be nil")
+	}
+	if !gen.Verbose {
+		t.Error("Verbose should be true")
+	}
+	if gen.Deprecations == nil {
+		t.Error("Deprecations should be initialized")
+	}
+	if len(gen.Deprecations) != 0 {
+		t.Errorf("Deprecations should be empty, got %d", len(gen.Deprecations))
+	}
+}
+
+// Additional ArgoCD edge case tests
+
+func TestGenerateGitOps_ArgoCDOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "argocd-only"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateGitOps()
+	if err != nil {
+		t.Fatalf("generateGitOps() error = %v", err)
+	}
+
+	// Verify ArgoCD files were created
+	projectPath := filepath.Join(tmpDir, "argocd-only/argocd/projects/infrastructure.yaml")
+	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		t.Error("ArgoCD infrastructure project not created")
+	}
+}
+
+func TestGenerateGitOps_FluxDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "flux-disabled"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "flux",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	// Flux is currently disabled, should not error but also not create files
+	err := gen.generateGitOps()
+	if err != nil {
+		t.Fatalf("generateGitOps() should not error even for flux: %v", err)
+	}
+}
+
+func TestGenerateGitOps_BothTools(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "both-tools"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "both",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateGitOps()
+	if err != nil {
+		t.Fatalf("generateGitOps() error = %v", err)
+	}
+
+	// ArgoCD files should be created even with "both" setting
+	projectPath := filepath.Join(tmpDir, "both-tools/both/projects/infrastructure.yaml")
+	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		t.Error("ArgoCD infrastructure project not created for 'both' tool setting")
+	}
+}
+
+func TestGetArgoCDNamespace_AllPlatforms(t *testing.T) {
+	tests := []struct {
+		platform  string
+		namespace string
+		expected  string
+	}{
+		{"kubernetes", "", "argocd"},
+		{"openshift", "", "openshift-gitops"},
+		{"eks", "", "argocd"},
+		{"aks", "", "argocd"},
+		{"gke", "", "argocd"},
+		{"kubernetes", "custom-ns", "custom-ns"},
+		{"openshift", "custom-ns", "custom-ns"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.platform+"_"+tt.namespace, func(t *testing.T) {
+			cfg := &config.Config{
+				Platform: tt.platform,
+				Bootstrap: config.Bootstrap{
+					Namespace: tt.namespace,
+				},
+			}
+			writer := output.New("/tmp", true, false)
+			gen := New(cfg, writer, false)
+
+			ns := gen.getArgoCDNamespace()
+			if ns != tt.expected {
+				t.Errorf("getArgoCDNamespace() = %s, want %s", ns, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGenerateArgoCD_MissingGitURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-git-url"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: ""}, // Empty URL
+		Output:     config.Output{URL: ""},    // Also empty
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err == nil {
+		t.Error("generateArgoCD() should error when git.url is missing")
+	}
+
+	if !strings.Contains(err.Error(), "git.url is required") {
+		t.Errorf("Expected 'git.url is required' error, got: %v", err)
+	}
+}
+
+func TestGenerateArgoCD_UsesOutputURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "output-url"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: ""},
+		Output:     config.Output{URL: "https://github.com/fallback/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() should use output.url as fallback: %v", err)
+	}
+}
+
+func TestGenerateArgoCDProjects_InfrastructureScope(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "infra-scope"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCDProjects("argocd")
+	if err != nil {
+		t.Fatalf("generateArgoCDProjects() error = %v", err)
+	}
+
+	infraPath := filepath.Join(tmpDir, "infra-scope/argocd/projects/infrastructure.yaml")
+	if _, err := os.Stat(infraPath); os.IsNotExist(err) {
+		t.Error("Infrastructure project should be created")
+	}
+
+	appsPath := filepath.Join(tmpDir, "infra-scope/argocd/projects/applications.yaml")
+	if _, err := os.Stat(appsPath); !os.IsNotExist(err) {
+		t.Error("Applications project should NOT be created for infrastructure scope")
+	}
+}
+
+func TestGenerateArgoCDProjects_ApplicationScope(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "app-scope"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCDProjects("argocd")
+	if err != nil {
+		t.Fatalf("generateArgoCDProjects() error = %v", err)
+	}
+
+	infraPath := filepath.Join(tmpDir, "app-scope/argocd/projects/infrastructure.yaml")
+	if _, err := os.Stat(infraPath); !os.IsNotExist(err) {
+		t.Error("Infrastructure project should NOT be created for application scope")
+	}
+
+	appsPath := filepath.Join(tmpDir, "app-scope/argocd/projects/applications.yaml")
+	if _, err := os.Stat(appsPath); os.IsNotExist(err) {
+		t.Error("Applications project should be created")
+	}
+}
+
+func TestGenerateSingleClusterArgoCD_MultipleEnvironments(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateSingleClusterArgoCD("argocd")
+	if err != nil {
+		t.Fatalf("generateSingleClusterArgoCD() error = %v", err)
+	}
+
+	// Verify files for each environment
+	envs := []string{"dev", "staging", "prod"}
+	for _, env := range envs {
+		infraPath := filepath.Join(tmpDir, "multi-env/argocd/applicationsets/infra-"+env+".yaml")
+		if _, err := os.Stat(infraPath); os.IsNotExist(err) {
+			t.Errorf("Infrastructure application not created for %s", env)
+		}
+
+		appsPath := filepath.Join(tmpDir, "multi-env/argocd/applicationsets/apps-"+env+".yaml")
+		if _, err := os.Stat(appsPath); os.IsNotExist(err) {
+			t.Errorf("Applications application not created for %s", env)
+		}
+	}
+}
+
+func TestGenerateSingleClusterArgoCD_WithClusterURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "with-cluster"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev", Cluster: "https://dev-cluster.example.com"},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateSingleClusterArgoCD("argocd")
+	if err != nil {
+		t.Fatalf("generateSingleClusterArgoCD() error = %v", err)
+	}
+
+	// Verify content includes the cluster URL
+	content, err := os.ReadFile(filepath.Join(tmpDir, "with-cluster/argocd/applicationsets/infra-dev.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "dev-cluster.example.com") {
+		t.Error("Application should contain the cluster URL")
+	}
+}
+
+func TestGenerateArgoCD_EmptyEnvironments(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:      config.Project{Name: "no-envs"},
+		Platform:     "kubernetes",
+		Scope:        "both",
+		GitOpsTool:   "argocd",
+		Git:          config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{}, // Empty
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	if err := gen.generateStructure(); err != nil {
+		t.Fatalf("generateStructure() error = %v", err)
+	}
+
+	err := gen.generateArgoCD()
+	if err != nil {
+		t.Fatalf("generateArgoCD() should handle empty environments: %v", err)
+	}
+
+	// Projects should still be created
+	infraPath := filepath.Join(tmpDir, "no-envs/argocd/projects/infrastructure.yaml")
+	if _, err := os.Stat(infraPath); os.IsNotExist(err) {
+		t.Error("Infrastructure project should be created even with no environments")
+	}
+}
+
+func TestEnvInfo_Struct(t *testing.T) {
+	env := envInfo{
+		Name:      "production",
+		Namespace: "prod-ns",
+	}
+
+	if env.Name != "production" {
+		t.Errorf("Name = %s, want production", env.Name)
+	}
+	if env.Namespace != "prod-ns" {
+		t.Errorf("Namespace = %s, want prod-ns", env.Namespace)
+	}
+}
+
+func TestEnvInfo_EmptyValues(t *testing.T) {
+	env := envInfo{}
+
+	if env.Name != "" {
+		t.Errorf("Name should be empty, got %s", env.Name)
+	}
+	if env.Namespace != "" {
+		t.Errorf("Namespace should be empty, got %s", env.Namespace)
+	}
+}
+
+// ============================================================================
+// Edge Case Tests - Boundary conditions and unusual inputs
+// ============================================================================
+
+func TestEdgeCase_VeryLongProjectName(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	longName := "this-is-an-extremely-long-project-name-that-exceeds-typical-limits-and-should-be-handled-gracefully-by-the-generator"
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: longName},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	// Should either succeed or fail gracefully - not panic
+	_ = gen.Generate()
+}
+
+func TestEdgeCase_SingleCharacterNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "a"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "d"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Single char names should work: %v", err)
+	}
+
+	// Verify namespace file was created
+	nsFile := filepath.Join(tmpDir, "a/infrastructure/base/namespaces/d.yaml")
+	if _, err := os.Stat(nsFile); os.IsNotExist(err) {
+		t.Error("Namespace file should be created for single char env name")
+	}
+}
+
+func TestEdgeCase_NumericEnvironmentNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "numeric-envs"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "env1"},
+			{Name: "env2"},
+			{Name: "env3"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Numeric env names should work: %v", err)
+	}
+
+	for _, env := range cfg.Environments {
+		nsFile := filepath.Join(tmpDir, "numeric-envs/infrastructure/base/namespaces", env.Name+".yaml")
+		if _, err := os.Stat(nsFile); os.IsNotExist(err) {
+			t.Errorf("Namespace file should be created for %s", env.Name)
+		}
+	}
+}
+
+func TestEdgeCase_HyphenatedNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "my-awesome-project"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev-us-east-1"},
+			{Name: "prod-eu-west-2"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Hyphenated names should work: %v", err)
+	}
+}
+
+func TestEdgeCase_UnderscoreNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "my_project_with_underscores"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev_environment"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Underscore names should work: %v", err)
+	}
+}
+
+func TestEdgeCase_ManyEnvironments(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create 10 environments
+	envs := make([]config.Environment, 10)
+	for i := 0; i < 10; i++ {
+		envs[i] = config.Environment{Name: fmt.Sprintf("env%d", i+1)}
+	}
+
+	cfg := &config.Config{
+		Project:      config.Project{Name: "many-envs"},
+		Platform:     "kubernetes",
+		Scope:        "infrastructure",
+		GitOpsTool:   "argocd",
+		Git:          config.GitConfig{URL: testGitURL},
+		Environments: envs,
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Many environments should work: %v", err)
+	}
+
+	// Verify all namespace files were created
+	for i := 0; i < 10; i++ {
+		envName := fmt.Sprintf("env%d", i+1)
+		nsFile := filepath.Join(tmpDir, "many-envs/infrastructure/base/namespaces", envName+".yaml")
+		if _, err := os.Stat(nsFile); os.IsNotExist(err) {
+			t.Errorf("Namespace file should be created for %s", envName)
+		}
+	}
+}
+
+func TestEdgeCase_ManyApplications(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create 10 applications
+	apps := make([]config.Application, 10)
+	for i := 0; i < 10; i++ {
+		apps[i] = config.Application{
+			Name:     fmt.Sprintf("app%d", i+1),
+			Image:    fmt.Sprintf("nginx:1.%d", i),
+			Port:     8080 + i,
+			Replicas: i + 1,
+		}
+	}
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "many-apps"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Apps: apps,
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Many applications should work: %v", err)
+	}
+
+	// Verify all app directories were created
+	for i := 0; i < 10; i++ {
+		appName := fmt.Sprintf("app%d", i+1)
+		appDir := filepath.Join(tmpDir, "many-apps/applications/base", appName)
+		if _, err := os.Stat(appDir); os.IsNotExist(err) {
+			t.Errorf("App directory should be created for %s", appName)
+		}
+	}
+}
+
+func TestEdgeCase_AllInfraEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "all-infra"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("All infra enabled should work: %v", err)
+	}
+
+	// Verify all infra directories have content
+	subdirs := []string{"namespaces", "rbac", "network-policies", "resource-quotas"}
+	for _, subdir := range subdirs {
+		path := filepath.Join(tmpDir, "all-infra/infrastructure/base", subdir, "dev.yaml")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("%s/dev.yaml should exist", subdir)
+		}
+	}
+}
+
+func TestEdgeCase_NoInfraEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-infra"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      false,
+			RBAC:            false,
+			NetworkPolicies: false,
+			ResourceQuotas:  false,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	// Should handle gracefully
+	err := gen.Generate()
+	// May fail or succeed depending on implementation
+	_ = err
+}
+
+func TestEdgeCase_SpecialPortNumbers(t *testing.T) {
+	tests := []struct {
+		name string
+		port int
+	}{
+		{"port-80", 80},
+		{"port-443", 443},
+		{"port-8080", 8080},
+		{"port-high", 65535},
+		{"port-1024", 1024},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: tc.name},
+				Platform:   "kubernetes",
+				Scope:      "application",
+				GitOpsTool: "argocd",
+				Git:        config.GitConfig{URL: testGitURL},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Apps: []config.Application{
+					{Name: "app", Image: "nginx", Port: tc.port, Replicas: 1},
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Port %d should work: %v", tc.port, err)
+			}
+
+			// Verify port is in deployment
+			deployFile := filepath.Join(tmpDir, tc.name+"/applications/base/app/deployment.yaml")
+			content, err := os.ReadFile(deployFile)
+			if err != nil {
+				t.Fatalf("Failed to read deployment: %v", err)
+			}
+
+			portStr := fmt.Sprintf("containerPort: %d", tc.port)
+			if !strings.Contains(string(content), portStr) {
+				t.Errorf("Deployment should have %s", portStr)
+			}
+		})
+	}
+}
+
+func TestEdgeCase_ReplicaCounts(t *testing.T) {
+	tests := []struct {
+		name     string
+		replicas int
+	}{
+		{"one-replica", 1},
+		{"three-replicas", 3},
+		{"ten-replicas", 10},
+		{"zero-replicas", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: tc.name},
+				Platform:   "kubernetes",
+				Scope:      "application",
+				GitOpsTool: "argocd",
+				Git:        config.GitConfig{URL: testGitURL},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Apps: []config.Application{
+					{Name: "app", Image: "nginx", Port: 80, Replicas: tc.replicas},
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Replicas %d should work: %v", tc.replicas, err)
+			}
+
+			// Verify replicas is in deployment
+			deployFile := filepath.Join(tmpDir, tc.name+"/applications/base/app/deployment.yaml")
+			content, err := os.ReadFile(deployFile)
+			if err != nil {
+				t.Fatalf("Failed to read deployment: %v", err)
+			}
+
+			replicaStr := fmt.Sprintf("replicas: %d", tc.replicas)
+			if !strings.Contains(string(content), replicaStr) {
+				t.Errorf("Deployment should have %s", replicaStr)
+			}
+		})
+	}
+}
+
+func TestEdgeCase_VariousImageFormats(t *testing.T) {
+	tests := []struct {
+		name  string
+		image string
+	}{
+		{"simple-image", "nginx"},
+		{"with-tag", "nginx:latest"},
+		{"with-version", "nginx:1.21.0"},
+		{"with-registry", "gcr.io/project/app:v1"},
+		{"with-port", "registry.example.com:5000/app:v1"},
+		{"sha-digest", "nginx@sha256:abc123"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: tc.name},
+				Platform:   "kubernetes",
+				Scope:      "application",
+				GitOpsTool: "argocd",
+				Git:        config.GitConfig{URL: testGitURL},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Apps: []config.Application{
+					{Name: "app", Image: tc.image, Port: 80, Replicas: 1},
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Image %s should work: %v", tc.image, err)
+			}
+
+			// Verify image is in deployment
+			deployFile := filepath.Join(tmpDir, tc.name+"/applications/base/app/deployment.yaml")
+			content, err := os.ReadFile(deployFile)
+			if err != nil {
+				t.Fatalf("Failed to read deployment: %v", err)
+			}
+
+			if !strings.Contains(string(content), "image: "+tc.image) {
+				t.Errorf("Deployment should have image: %s", tc.image)
+			}
+		})
+	}
+}
+
+func TestEdgeCase_DryRunPreservesExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create an existing file
+	existingDir := filepath.Join(tmpDir, "existing-project")
+	if err := os.MkdirAll(existingDir, 0755); err != nil {
+		t.Fatalf("Failed to create existing dir: %v", err)
+	}
+
+	existingFile := filepath.Join(existingDir, "existing.txt")
+	if err := os.WriteFile(existingFile, []byte("existing content"), 0644); err != nil {
+		t.Fatalf("Failed to create existing file: %v", err)
+	}
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "existing-project"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, true, false) // dryRun = true
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Dry run should succeed: %v", err)
+	}
+
+	// Existing file should be preserved
+	content, err := os.ReadFile(existingFile)
+	if err != nil {
+		t.Fatalf("Existing file should still exist: %v", err)
+	}
+
+	if string(content) != "existing content" {
+		t.Error("Existing content should be preserved")
+	}
+}
+
+func TestEdgeCase_VerboseModeOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "verbose-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, true) // verbose = true
+	gen := New(cfg, writer, true)             // verbose = true
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Verbose mode should work: %v", err)
+	}
+}
+
+func TestEdgeCase_MultiClusterURLFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		clusterURL string
+	}{
+		{"https-standard", "https://cluster.example.com:6443"},
+		{"https-no-port", "https://cluster.example.com"},
+		{"localhost", "https://localhost:6443"},
+		{"ip-address", "https://192.168.1.100:6443"},
+		{"aws-eks", "https://ABC123.gr7.us-west-2.eks.amazonaws.com"},
+		{"azure-aks", "https://myaks-dns-abc123.hcp.westus2.azmk8s.io:443"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: tc.name},
+				Platform:   "kubernetes",
+				Scope:      "infrastructure",
+				GitOpsTool: "argocd",
+				Git:        config.GitConfig{URL: testGitURL},
+				Environments: []config.Environment{
+					{Name: "dev", ClusterURL: tc.clusterURL},
+				},
+				Infra: config.Infrastructure{
+					Namespaces: true,
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Cluster URL %s should work: %v", tc.clusterURL, err)
+			}
+		})
+	}
+}
+
+func TestEdgeCase_ProjectDescriptionWithSpecialChars(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "special-desc",
+			Description: "Project with special chars: <>&\"'",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Git:        config.GitConfig{URL: testGitURL},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Docs: config.Documentation{
+			Readme: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := New(cfg, writer, false)
+
+	err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Special chars in description should work: %v", err)
+	}
+}
+
+func TestEdgeCase_AllPlatformsWithBootstrap(t *testing.T) {
+	platforms := []struct {
+		platform  string
+		namespace string
+	}{
+		{"kubernetes", "argocd"},
+		{"openshift", "openshift-gitops"},
+		{"eks", "argocd"},
+		{"aks", "argocd"},
+	}
+
+	for _, tc := range platforms {
+		t.Run(tc.platform, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: "bootstrap-" + tc.platform},
+				Platform:   tc.platform,
+				Scope:      "both",
+				GitOpsTool: "argocd",
+				Git:        config.GitConfig{URL: testGitURL},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Bootstrap: config.BootstrapConfig{
+					Enabled: true,
+					Mode:    "helm",
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := New(cfg, writer, false)
+
+			err := gen.Generate()
+			if err != nil {
+				t.Fatalf("Platform %s should work: %v", tc.platform, err)
+			}
+		})
 	}
 }

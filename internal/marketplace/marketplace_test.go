@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewPattern(t *testing.T) {
@@ -898,4 +900,1194 @@ func TestPatternToYAML(t *testing.T) {
 // Helper function
 func containsString(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || containsString(s[1:], substr)))
+}
+
+func TestMarketplaceGetRegistry(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	registry := mp.GetRegistry()
+	if registry == nil {
+		t.Error("GetRegistry() should not return nil")
+	}
+
+	registries := registry.ListRegistries()
+	if len(registries) != 1 {
+		t.Errorf("Expected 1 registry, got %d", len(registries))
+	}
+}
+
+func TestMarketplaceGetInstaller(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	// Before Configure
+	if mp.GetInstaller() != nil {
+		t.Error("GetInstaller() should be nil before Configure()")
+	}
+
+	// After Configure
+	mp.Configure("argocd", "kubernetes")
+	if mp.GetInstaller() == nil {
+		t.Error("GetInstaller() should not be nil after Configure()")
+	}
+}
+
+func TestMarketplaceInstall_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.Install(context.Background(), "test-pattern", InstallOptions{})
+	if err == nil {
+		t.Error("Install() should error when not configured")
+	}
+	if !containsString(err.Error(), "not configured") {
+		t.Errorf("Expected 'not configured' error, got: %v", err)
+	}
+}
+
+func TestMarketplaceUninstall_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	err := mp.Uninstall(context.Background(), "test-pattern", UninstallOptions{})
+	if err == nil {
+		t.Error("Uninstall() should error when not configured")
+	}
+	if !containsString(err.Error(), "not configured") {
+		t.Errorf("Expected 'not configured' error, got: %v", err)
+	}
+}
+
+func TestMarketplaceUpdate_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.Update(context.Background(), "test-pattern", UpdateOptions{})
+	if err == nil {
+		t.Error("Update() should error when not configured")
+	}
+	if !containsString(err.Error(), "not configured") {
+		t.Errorf("Expected 'not configured' error, got: %v", err)
+	}
+}
+
+func TestMarketplaceGetStatus_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.GetStatus(context.Background())
+	if err == nil {
+		t.Error("GetStatus() should error when not configured")
+	}
+}
+
+func TestMarketplaceCheckUpdates_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.CheckUpdates(context.Background())
+	if err == nil {
+		t.Error("CheckUpdates() should error when not configured")
+	}
+}
+
+func TestMarketplaceGetDependencyTree_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.GetDependencyTree(context.Background(), "test")
+	if err == nil {
+		t.Error("GetDependencyTree() should error when not configured")
+	}
+}
+
+func TestMarketplaceConflictCheck_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	_, err := mp.ConflictCheck(context.Background(), "test")
+	if err == nil {
+		t.Error("ConflictCheck() should error when not configured")
+	}
+}
+
+func TestMarketplaceSuggestPatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	suggestions, err := mp.SuggestPatterns(context.Background())
+	if err != nil {
+		t.Fatalf("SuggestPatterns() error = %v", err)
+	}
+
+	// Should suggest all 4 patterns since none exist
+	if len(suggestions) != 4 {
+		t.Errorf("Expected 4 suggestions, got %d", len(suggestions))
+	}
+
+	// Check suggestions include expected patterns
+	patternNames := make(map[string]bool)
+	for _, s := range suggestions {
+		patternNames[s.Pattern] = true
+	}
+
+	expected := []string{"prometheus-stack", "loki-stack", "nginx-ingress", "sealed-secrets"}
+	for _, name := range expected {
+		if !patternNames[name] {
+			t.Errorf("Expected suggestion for %s", name)
+		}
+	}
+}
+
+func TestMarketplaceSuggestPatterns_WithExistingDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create infrastructure directories to reduce suggestions
+	infraPath := filepath.Join(tmpDir, "infrastructure")
+	os.MkdirAll(filepath.Join(infraPath, "monitoring"), 0755)
+	os.MkdirAll(filepath.Join(infraPath, "logging"), 0755)
+
+	mp := NewMarketplace(tmpDir)
+	suggestions, err := mp.SuggestPatterns(context.Background())
+	if err != nil {
+		t.Fatalf("SuggestPatterns() error = %v", err)
+	}
+
+	// Should only suggest 2 patterns (ingress and secrets)
+	if len(suggestions) != 2 {
+		t.Errorf("Expected 2 suggestions, got %d", len(suggestions))
+	}
+}
+
+func TestMarketplaceExportConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+	mp.Configure("argocd", "kubernetes")
+
+	outputPath := filepath.Join(tmpDir, "patterns-config.yaml")
+	err := mp.ExportConfig(outputPath)
+	if err != nil {
+		t.Fatalf("ExportConfig() error = %v", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		t.Error("Export file was not created")
+	}
+
+	// Read and verify content
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to read export file: %v", err)
+	}
+
+	if !containsString(string(data), "patterns") {
+		t.Error("Export should contain 'patterns' key")
+	}
+}
+
+func TestMarketplaceImportConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+	mp.Configure("argocd", "kubernetes")
+
+	// Create a config file
+	configPath := filepath.Join(tmpDir, "import-config.yaml")
+	configContent := `patterns:
+  - name: test-pattern
+    version: 1.0.0
+    config:
+      replicas: 3
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	results, err := mp.ImportConfig(ctx, configPath)
+	// May fail due to pattern not found, but should not panic
+	if err != nil {
+		t.Logf("ImportConfig returned error (expected): %v", err)
+	}
+
+	// Results should contain the attempt even if failed
+	if results != nil && len(results) > 0 {
+		if results[0].Pattern != "test-pattern" {
+			t.Errorf("Expected pattern 'test-pattern', got '%s'", results[0].Pattern)
+		}
+	}
+}
+
+func TestMarketplaceImportConfig_InvalidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+	mp.Configure("argocd", "kubernetes")
+
+	_, err := mp.ImportConfig(context.Background(), "/nonexistent/path.yaml")
+	if err == nil {
+		t.Error("ImportConfig() should error for non-existent file")
+	}
+}
+
+func TestMarketplaceImportConfig_InvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+	mp.Configure("argocd", "kubernetes")
+
+	configPath := filepath.Join(tmpDir, "invalid.yaml")
+	if err := os.WriteFile(configPath, []byte("invalid: yaml: content: ["), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	_, err := mp.ImportConfig(context.Background(), configPath)
+	if err == nil {
+		t.Error("ImportConfig() should error for invalid YAML")
+	}
+}
+
+func TestInstallerUninstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	// Try to uninstall non-existent pattern
+	err := installer.Uninstall(context.Background(), "nonexistent", UninstallOptions{})
+	if err == nil {
+		t.Error("Uninstall() should error for non-existent pattern")
+	}
+
+	// Add an installed pattern manually
+	installer.installed["test-pattern"] = &InstalledPattern{
+		Pattern: Pattern{
+			Metadata: PatternMetadata{
+				Name:    "test-pattern",
+				Version: "1.0.0",
+			},
+		},
+		InstalledAt: time.Now(),
+		Status:      "installed",
+		Paths:       []string{}, // No files to remove
+	}
+
+	// Save state
+	if err := installer.SaveState(); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+
+	// Now uninstall
+	err = installer.Uninstall(context.Background(), "test-pattern", UninstallOptions{KeepFiles: true})
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	// Verify pattern is removed
+	if _, ok := installer.installed["test-pattern"]; ok {
+		t.Error("Pattern should be removed from installed map")
+	}
+}
+
+func TestInstallerUninstall_WithFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	// Create a file that will be "uninstalled"
+	testFile := filepath.Join(tmpDir, "test-file.yaml")
+	if err := os.WriteFile(testFile, []byte("test: content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	installer.installed["test-pattern"] = &InstalledPattern{
+		Pattern: Pattern{
+			Metadata: PatternMetadata{
+				Name:    "test-pattern",
+				Version: "1.0.0",
+			},
+		},
+		InstalledAt: time.Now(),
+		Status:      "installed",
+		Paths:       []string{testFile},
+	}
+
+	// Uninstall without keeping files
+	err := installer.Uninstall(context.Background(), "test-pattern", UninstallOptions{KeepFiles: false})
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	// Verify file is removed
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Error("File should be removed")
+	}
+}
+
+func TestInstallerUpdate_NotInstalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	_, err := installer.Update(context.Background(), "nonexistent", UpdateOptions{})
+	if err == nil {
+		t.Error("Update() should error for non-installed pattern")
+	}
+}
+
+func TestInstallerGetInstalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	// Try non-existent
+	_, err := installer.GetInstalled("nonexistent")
+	if err == nil {
+		t.Error("GetInstalled() should error for non-existent pattern")
+	}
+
+	// Add pattern
+	installer.installed["test-pattern"] = &InstalledPattern{
+		Pattern: Pattern{
+			Metadata: PatternMetadata{
+				Name:    "test-pattern",
+				Version: "1.0.0",
+			},
+		},
+	}
+	installer.SaveState()
+
+	// Create new installer and load
+	installer2 := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+	installed, err := installer2.GetInstalled("test-pattern")
+	if err != nil {
+		t.Fatalf("GetInstalled() error = %v", err)
+	}
+
+	if installed.Pattern.Metadata.Name != "test-pattern" {
+		t.Errorf("Expected 'test-pattern', got '%s'", installed.Pattern.Metadata.Name)
+	}
+}
+
+func TestInstallerGetStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	// Create a file for healthy status
+	healthyFile := filepath.Join(tmpDir, "healthy.yaml")
+	if err := os.WriteFile(healthyFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	installer.installed["healthy-pattern"] = &InstalledPattern{
+		Pattern: Pattern{Metadata: PatternMetadata{Name: "healthy-pattern"}},
+		Paths:   []string{healthyFile},
+	}
+
+	installer.installed["degraded-pattern"] = &InstalledPattern{
+		Pattern: Pattern{Metadata: PatternMetadata{Name: "degraded-pattern"}},
+		Paths:   []string{"/nonexistent/file.yaml"},
+	}
+
+	status, err := installer.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus() error = %v", err)
+	}
+
+	if status["healthy-pattern"] != "healthy" {
+		t.Errorf("Expected 'healthy', got '%s'", status["healthy-pattern"])
+	}
+
+	if status["degraded-pattern"] != "degraded" {
+		t.Errorf("Expected 'degraded', got '%s'", status["degraded-pattern"])
+	}
+}
+
+func TestMergeValues(t *testing.T) {
+	compValues := map[string]any{
+		"replicas": 1,
+		"image":    "nginx:latest",
+	}
+
+	config := map[string]any{
+		"replicas": 3,
+		"port":     8080,
+	}
+
+	result := mergeValues(compValues, config)
+
+	if result["replicas"] != 3 {
+		t.Errorf("Expected replicas=3, got %v", result["replicas"])
+	}
+	if result["image"] != "nginx:latest" {
+		t.Errorf("Expected image='nginx:latest', got %v", result["image"])
+	}
+	if result["port"] != 8080 {
+		t.Errorf("Expected port=8080, got %v", result["port"])
+	}
+}
+
+func TestGenerateIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a pattern directory structure
+	patternDir := filepath.Join(tmpDir, "patterns", "test-pattern", "1.0.0")
+	if err := os.MkdirAll(patternDir, 0755); err != nil {
+		t.Fatalf("Failed to create pattern dir: %v", err)
+	}
+
+	// Create pattern.yaml
+	pattern := NewPattern("test-pattern", "1.0.0", "Test pattern")
+	pattern.Metadata.Category = "security"
+	if err := pattern.Save(filepath.Join(patternDir, "pattern.yaml")); err != nil {
+		t.Fatalf("Failed to save pattern: %v", err)
+	}
+
+	// Generate index
+	indexPath := filepath.Join(tmpDir, "index.yaml")
+	err := GenerateIndex(filepath.Join(tmpDir, "patterns"), indexPath)
+	if err != nil {
+		t.Fatalf("GenerateIndex() error = %v", err)
+	}
+
+	// Verify index exists
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		t.Error("Index file was not created")
+	}
+
+	// Read and verify content
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("Failed to read index: %v", err)
+	}
+
+	if !containsString(string(data), "test-pattern") {
+		t.Error("Index should contain pattern name")
+	}
+}
+
+func TestRegistryManagerGetRegistry(t *testing.T) {
+	rm := NewRegistryManager("/tmp/cache")
+
+	// Get existing registry
+	reg, err := rm.GetRegistry("official")
+	if err != nil {
+		t.Fatalf("GetRegistry() error = %v", err)
+	}
+	if reg.Name != "official" {
+		t.Errorf("Expected 'official', got '%s'", reg.Name)
+	}
+
+	// Get non-existent registry
+	_, err = rm.GetRegistry("nonexistent")
+	if err == nil {
+		t.Error("GetRegistry() should error for non-existent registry")
+	}
+}
+
+func TestRegistryManagerGetCachedIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(tmpDir)
+
+	// No cached index
+	_, err := rm.GetCachedIndex("official")
+	if err == nil {
+		t.Error("GetCachedIndex() should error when no cache exists")
+	}
+
+	// Create cached index
+	cacheDir := filepath.Join(tmpDir, "registries", "official")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("Failed to create cache dir: %v", err)
+	}
+
+	index := RegistryIndex{
+		Version: "1.0",
+		Patterns: []PatternIndexEntry{
+			{Name: "test", Latest: "1.0.0"},
+		},
+	}
+	data, _ := yaml.Marshal(index)
+	if err := os.WriteFile(filepath.Join(cacheDir, "index.yaml"), data, 0644); err != nil {
+		t.Fatalf("Failed to write cache: %v", err)
+	}
+
+	// Get cached index
+	cached, err := rm.GetCachedIndex("official")
+	if err != nil {
+		t.Fatalf("GetCachedIndex() error = %v", err)
+	}
+	if len(cached.Patterns) != 1 {
+		t.Errorf("Expected 1 pattern, got %d", len(cached.Patterns))
+	}
+}
+
+func TestRegistryManagerGetCachedIndex_NoCache(t *testing.T) {
+	rm := &RegistryManager{cacheDir: ""}
+
+	_, err := rm.GetCachedIndex("official")
+	if err == nil {
+		t.Error("GetCachedIndex() should error when cache not configured")
+	}
+}
+
+func TestRegistryManagerToJSON(t *testing.T) {
+	rm := NewRegistryManager("/tmp/cache")
+
+	json, err := rm.ToJSON()
+	if err != nil {
+		t.Fatalf("ToJSON() error = %v", err)
+	}
+
+	if json == "" {
+		t.Error("ToJSON() should return non-empty string")
+	}
+	if !containsString(json, "official") {
+		t.Error("JSON should contain 'official' registry")
+	}
+}
+
+func TestRegistryManagerFetchLocalIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(tmpDir)
+
+	// Add local registry
+	localReg := Registry{
+		Name:     "local",
+		Type:     RegistryTypeLocal,
+		URL:      tmpDir,
+		Enabled:  true,
+		Priority: 50,
+	}
+	rm.AddRegistry(localReg)
+
+	// Create index.yaml
+	index := RegistryIndex{
+		Version: "1.0",
+		Patterns: []PatternIndexEntry{
+			{Name: "local-pattern", Latest: "1.0.0"},
+		},
+	}
+	data, _ := yaml.Marshal(index)
+	if err := os.WriteFile(filepath.Join(tmpDir, "index.yaml"), data, 0644); err != nil {
+		t.Fatalf("Failed to write index: %v", err)
+	}
+
+	// Fetch index
+	fetched, err := rm.FetchIndex(context.Background(), "local")
+	if err != nil {
+		t.Fatalf("FetchIndex() error = %v", err)
+	}
+
+	if len(fetched.Patterns) != 1 {
+		t.Errorf("Expected 1 pattern, got %d", len(fetched.Patterns))
+	}
+}
+
+func TestRegistryManagerFetchLocalPattern(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(tmpDir)
+
+	// Add local registry
+	localReg := Registry{
+		Name:     "local",
+		Type:     RegistryTypeLocal,
+		URL:      tmpDir,
+		Enabled:  true,
+		Priority: 50,
+	}
+	rm.AddRegistry(localReg)
+
+	// Create pattern directory
+	patternDir := filepath.Join(tmpDir, "patterns", "local-pattern", "1.0.0")
+	if err := os.MkdirAll(patternDir, 0755); err != nil {
+		t.Fatalf("Failed to create pattern dir: %v", err)
+	}
+
+	// Create pattern.yaml
+	pattern := NewPattern("local-pattern", "1.0.0", "Local test pattern")
+	if err := pattern.Save(filepath.Join(patternDir, "pattern.yaml")); err != nil {
+		t.Fatalf("Failed to save pattern: %v", err)
+	}
+
+	// Fetch pattern
+	fetched, err := rm.FetchPattern(context.Background(), "local", "local-pattern", "1.0.0")
+	if err != nil {
+		t.Fatalf("FetchPattern() error = %v", err)
+	}
+
+	if fetched.Metadata.Name != "local-pattern" {
+		t.Errorf("Expected 'local-pattern', got '%s'", fetched.Metadata.Name)
+	}
+}
+
+func TestRegistryManagerFetchDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(tmpDir)
+
+	// Add disabled registry
+	rm.AddRegistry(Registry{
+		Name:    "disabled",
+		Type:    RegistryTypeLocal,
+		URL:     tmpDir,
+		Enabled: false,
+	})
+
+	_, err := rm.FetchIndex(context.Background(), "disabled")
+	if err == nil {
+		t.Error("FetchIndex() should error for disabled registry")
+	}
+}
+
+func TestAddRegistryValidation(t *testing.T) {
+	rm := NewRegistryManager("/tmp/cache")
+
+	// Missing name
+	err := rm.AddRegistry(Registry{URL: "http://example.com"})
+	if err == nil {
+		t.Error("AddRegistry() should error for missing name")
+	}
+
+	// Missing URL for non-local
+	err = rm.AddRegistry(Registry{Name: "test", Type: RegistryTypePrivate})
+	if err == nil {
+		t.Error("AddRegistry() should error for missing URL")
+	}
+
+	// Local registry without URL is valid
+	err = rm.AddRegistry(Registry{Name: "local-test", Type: RegistryTypeLocal, URL: "/tmp"})
+	if err != nil {
+		t.Errorf("AddRegistry() should not error for local registry: %v", err)
+	}
+}
+
+func TestSortSearchResults(t *testing.T) {
+	results := []PatternSearchResult{
+		{Name: "prometheus-stack", Rating: 4.5, Downloads: 100},
+		{Name: "test", Rating: 3.0, Downloads: 50},
+		{Name: "test-prometheus", Rating: 4.0, Downloads: 80},
+	}
+
+	sortSearchResults(results, "test")
+
+	// "test" should be first (exact match)
+	if results[0].Name != "test" {
+		t.Errorf("Expected 'test' first, got '%s'", results[0].Name)
+	}
+
+	// "test-prometheus" should be second (prefix match)
+	if results[1].Name != "test-prometheus" {
+		t.Errorf("Expected 'test-prometheus' second, got '%s'", results[1].Name)
+	}
+}
+
+func TestPatternValidate_MissingVersion(t *testing.T) {
+	pattern := Pattern{
+		APIVersion: "gitopsi.io/v1",
+		Kind:       "Pattern",
+		Metadata: PatternMetadata{
+			Name:        "test",
+			Description: "Test",
+		},
+	}
+
+	err := pattern.Validate()
+	if err == nil {
+		t.Error("Validate() should error for missing version")
+	}
+}
+
+func TestPatternValidate_MissingDescription(t *testing.T) {
+	pattern := Pattern{
+		APIVersion: "gitopsi.io/v1",
+		Kind:       "Pattern",
+		Metadata: PatternMetadata{
+			Name:    "test",
+			Version: "1.0.0",
+		},
+	}
+
+	err := pattern.Validate()
+	if err == nil {
+		t.Error("Validate() should error for missing description")
+	}
+}
+
+func TestPatternIsCompatibleWithTool_NoRestrictions(t *testing.T) {
+	pattern := NewPattern("test", "1.0.0", "Test")
+	// No GitOpsTools defined means compatible with all
+
+	if !pattern.IsCompatibleWithTool("argocd") {
+		t.Error("Should be compatible with argocd when no restrictions")
+	}
+	if !pattern.IsCompatibleWithTool("flux") {
+		t.Error("Should be compatible with flux when no restrictions")
+	}
+}
+
+func TestPatternValidateConfig_TypeValidation(t *testing.T) {
+	pattern := NewPattern("test", "1.0.0", "Test")
+	pattern.Spec.Config = map[string]ConfigItem{
+		"count": {Type: ConfigTypeInteger},
+		"flag":  {Type: ConfigTypeBoolean},
+		"name":  {Type: ConfigTypeString},
+	}
+
+	tests := []struct {
+		name      string
+		config    map[string]any
+		wantError bool
+	}{
+		{
+			name:      "valid integer",
+			config:    map[string]any{"count": 5},
+			wantError: false,
+		},
+		{
+			name:      "valid boolean",
+			config:    map[string]any{"flag": true},
+			wantError: false,
+		},
+		{
+			name:      "valid string",
+			config:    map[string]any{"name": "test"},
+			wantError: false,
+		},
+		{
+			name:      "invalid - string for integer",
+			config:    map[string]any{"count": "five"},
+			wantError: true,
+		},
+		{
+			name:      "invalid - string for boolean",
+			config:    map[string]any{"flag": "yes"},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := pattern.ValidateConfig(tt.config)
+			if (err != nil) != tt.wantError {
+				t.Errorf("ValidateConfig() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestLoadPattern_InvalidPath(t *testing.T) {
+	_, err := LoadPattern("/nonexistent/path/pattern.yaml")
+	if err == nil {
+		t.Error("LoadPattern() should error for non-existent path")
+	}
+}
+
+func TestLoadPattern_InvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	invalidPath := filepath.Join(tmpDir, "invalid.yaml")
+	if err := os.WriteFile(invalidPath, []byte("invalid: yaml: ["), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	_, err := LoadPattern(invalidPath)
+	if err == nil {
+		t.Error("LoadPattern() should error for invalid YAML")
+	}
+}
+
+func TestInstallerCheckUpdates(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(filepath.Join(tmpDir, "cache"))
+	installer := NewInstaller(rm, tmpDir, "argocd", "kubernetes")
+
+	// No installed patterns
+	updates, err := installer.CheckUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("CheckUpdates() error = %v", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("Expected 0 updates, got %d", len(updates))
+	}
+}
+
+func TestUninstallOptions(t *testing.T) {
+	opts := UninstallOptions{
+		Force:     true,
+		KeepFiles: true,
+	}
+
+	if !opts.Force {
+		t.Error("Force should be true")
+	}
+	if !opts.KeepFiles {
+		t.Error("KeepFiles should be true")
+	}
+}
+
+func TestUpdateOptions(t *testing.T) {
+	opts := UpdateOptions{
+		Version: "2.0.0",
+		Force:   true,
+	}
+
+	if opts.Version != "2.0.0" {
+		t.Errorf("Version = %s, want '2.0.0'", opts.Version)
+	}
+	if !opts.Force {
+		t.Error("Force should be true")
+	}
+}
+
+func TestMarketplaceAddRemoveRegistry(t *testing.T) {
+	tmpDir := t.TempDir()
+	mp := NewMarketplace(tmpDir)
+
+	// Add registry
+	reg := Registry{
+		Name:     "custom",
+		Type:     RegistryTypePrivate,
+		URL:      "https://custom.example.com",
+		Priority: 50,
+		Enabled:  true,
+	}
+
+	if err := mp.AddRegistry(reg); err != nil {
+		t.Fatalf("AddRegistry() error = %v", err)
+	}
+
+	registries := mp.ListRegistries()
+	if len(registries) != 2 {
+		t.Errorf("Expected 2 registries, got %d", len(registries))
+	}
+
+	// Remove registry
+	if err := mp.RemoveRegistry("custom"); err != nil {
+		t.Fatalf("RemoveRegistry() error = %v", err)
+	}
+
+	registries = mp.ListRegistries()
+	if len(registries) != 1 {
+		t.Errorf("Expected 1 registry, got %d", len(registries))
+	}
+}
+
+func TestDependencyResult(t *testing.T) {
+	result := DependencyResult{
+		Name:     "dep1",
+		Version:  "1.0.0",
+		Status:   "installed",
+		Optional: false,
+		Message:  "Installed successfully",
+	}
+
+	if result.Name != "dep1" {
+		t.Errorf("Name = %s, want 'dep1'", result.Name)
+	}
+	if result.Status != "installed" {
+		t.Errorf("Status = %s, want 'installed'", result.Status)
+	}
+}
+
+func TestPatternVersion(t *testing.T) {
+	version := PatternVersion{
+		Version:    "1.0.0",
+		ReleasedAt: time.Now(),
+		Changelog:  "Initial release",
+	}
+
+	if version.Version != "1.0.0" {
+		t.Errorf("Version = %s, want '1.0.0'", version.Version)
+	}
+	if version.Changelog != "Initial release" {
+		t.Errorf("Changelog = %s, want 'Initial release'", version.Changelog)
+	}
+	if version.ReleasedAt.IsZero() {
+		t.Error("ReleasedAt should not be zero")
+	}
+}
+
+func TestPatternSearchResult(t *testing.T) {
+	result := PatternSearchResult{
+		Name:        "test",
+		Version:     "1.0.0",
+		Description: "Test pattern",
+		Category:    "security",
+		Tags:        []string{"test", "security"},
+		Rating:      4.5,
+		Downloads:   1000,
+		Installed:   true,
+	}
+
+	if result.Name != "test" {
+		t.Errorf("Name = %s, want 'test'", result.Name)
+	}
+	if result.Rating != 4.5 {
+		t.Errorf("Rating = %f, want 4.5", result.Rating)
+	}
+	if !result.Installed {
+		t.Error("Installed should be true")
+	}
+}
+
+func TestRegistryAuth(t *testing.T) {
+	auth := RegistryAuth{
+		Type:     "token",
+		Token:    "secret-token",
+		Username: "",
+		Password: "",
+	}
+
+	if auth.Type != "token" {
+		t.Errorf("Type = %s, want 'token'", auth.Type)
+	}
+	if auth.Token != "secret-token" {
+		t.Errorf("Token = %s, want 'secret-token'", auth.Token)
+	}
+}
+
+func TestCacheIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	rm := NewRegistryManager(tmpDir)
+
+	index := &RegistryIndex{
+		Version: "1.0",
+		Patterns: []PatternIndexEntry{
+			{Name: "cached-pattern", Latest: "1.0.0"},
+		},
+	}
+
+	err := rm.cacheIndex("test-registry", index)
+	if err != nil {
+		t.Fatalf("cacheIndex() error = %v", err)
+	}
+
+	// Verify cache was created
+	cachePath := filepath.Join(tmpDir, "registries", "test-registry", "index.yaml")
+	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+		t.Error("Cache file was not created")
+	}
+}
+
+func TestCacheIndex_NoCache(t *testing.T) {
+	rm := &RegistryManager{cacheDir: ""}
+
+	err := rm.cacheIndex("test", &RegistryIndex{})
+	if err != nil {
+		t.Errorf("cacheIndex() should not error when cache disabled: %v", err)
+	}
+}
+
+func TestPatternSearchResult_EmptyFields(t *testing.T) {
+	result := PatternSearchResult{}
+
+	if result.Name != "" {
+		t.Errorf("Name = %s, want empty", result.Name)
+	}
+	if result.Rating != 0 {
+		t.Errorf("Rating = %f, want 0", result.Rating)
+	}
+	if result.Downloads != 0 {
+		t.Errorf("Downloads = %d, want 0", result.Downloads)
+	}
+	if result.Installed {
+		t.Error("Installed should be false by default")
+	}
+}
+
+func TestRegistryAuth_BasicAuth(t *testing.T) {
+	auth := RegistryAuth{
+		Type:     "basic",
+		Username: "user",
+		Password: "pass",
+	}
+
+	if auth.Type != "basic" {
+		t.Errorf("Type = %s, want basic", auth.Type)
+	}
+	if auth.Username != "user" {
+		t.Errorf("Username = %s, want user", auth.Username)
+	}
+	if auth.Password != "pass" {
+		t.Errorf("Password = %s, want pass", auth.Password)
+	}
+}
+
+func TestRegistryAuth_EmptyFields(t *testing.T) {
+	auth := RegistryAuth{}
+
+	if auth.Type != "" {
+		t.Errorf("Type = %s, want empty", auth.Type)
+	}
+	if auth.Token != "" {
+		t.Errorf("Token = %s, want empty", auth.Token)
+	}
+}
+
+func TestPatternVersion_EmptyChangelog(t *testing.T) {
+	version := PatternVersion{
+		Version:   "1.0.0",
+		Changelog: "",
+	}
+
+	if version.Changelog != "" {
+		t.Errorf("Changelog = %s, want empty", version.Changelog)
+	}
+}
+
+func TestPatternIndexEntry(t *testing.T) {
+	entry := PatternIndexEntry{
+		Name:        "test-pattern",
+		Latest:      "2.0.0",
+		Description: "A test pattern",
+		Category:    "monitoring",
+		Tags:        []string{"prometheus", "grafana"},
+	}
+
+	if entry.Name != "test-pattern" {
+		t.Errorf("Name = %s, want test-pattern", entry.Name)
+	}
+	if entry.Latest != "2.0.0" {
+		t.Errorf("Latest = %s, want 2.0.0", entry.Latest)
+	}
+	if len(entry.Tags) != 2 {
+		t.Errorf("Tags length = %d, want 2", len(entry.Tags))
+	}
+}
+
+func TestPatternIndexEntry_EmptyTags(t *testing.T) {
+	entry := PatternIndexEntry{
+		Name:   "minimal-pattern",
+		Latest: "1.0.0",
+		Tags:   nil,
+	}
+
+	if entry.Tags != nil {
+		t.Error("Tags should be nil")
+	}
+}
+
+func TestRegistryIndex_EmptyPatterns(t *testing.T) {
+	index := RegistryIndex{
+		Version:  "1.0",
+		Patterns: nil,
+	}
+
+	if index.Patterns != nil {
+		t.Error("Patterns should be nil")
+	}
+}
+
+func TestRegistryIndex_MultiplePatterns(t *testing.T) {
+	index := RegistryIndex{
+		Version: "1.0",
+		Patterns: []PatternIndexEntry{
+			{Name: "pattern1", Latest: "1.0.0"},
+			{Name: "pattern2", Latest: "2.0.0"},
+			{Name: "pattern3", Latest: "3.0.0"},
+		},
+	}
+
+	if len(index.Patterns) != 3 {
+		t.Errorf("Patterns length = %d, want 3", len(index.Patterns))
+	}
+}
+
+func TestNewRegistryManager_EmptyCacheDir(t *testing.T) {
+	rm := NewRegistryManager("")
+
+	if rm.cacheDir != "" {
+		t.Errorf("cacheDir = %s, want empty", rm.cacheDir)
+	}
+}
+
+func TestRegistryManager_GetRegistries_Empty(t *testing.T) {
+	rm := NewRegistryManager("")
+
+	registries := rm.GetRegistries()
+	// Should return default registries
+	if registries == nil {
+		t.Error("GetRegistries should not return nil")
+	}
+}
+
+func TestPatternSearchResult_AllFields(t *testing.T) {
+	result := PatternSearchResult{
+		Name:        "full-pattern",
+		Version:     "3.0.0",
+		Description: "A fully featured pattern",
+		Category:    "infrastructure",
+		Tags:        []string{"k8s", "aws", "terraform"},
+		Rating:      5.0,
+		Downloads:   99999,
+		Installed:   true,
+	}
+
+	if result.Name != "full-pattern" {
+		t.Errorf("Name = %s", result.Name)
+	}
+	if result.Version != "3.0.0" {
+		t.Errorf("Version = %s", result.Version)
+	}
+	if result.Description != "A fully featured pattern" {
+		t.Errorf("Description = %s", result.Description)
+	}
+	if result.Category != "infrastructure" {
+		t.Errorf("Category = %s", result.Category)
+	}
+	if len(result.Tags) != 3 {
+		t.Errorf("Tags length = %d", len(result.Tags))
+	}
+	if result.Rating != 5.0 {
+		t.Errorf("Rating = %f", result.Rating)
+	}
+	if result.Downloads != 99999 {
+		t.Errorf("Downloads = %d", result.Downloads)
+	}
+	if !result.Installed {
+		t.Error("Installed should be true")
+	}
+}
+
+func TestRegistryAuth_AllAuthTypes(t *testing.T) {
+	authTypes := []string{"none", "basic", "token", "oauth"}
+
+	for _, authType := range authTypes {
+		t.Run(authType, func(t *testing.T) {
+			auth := RegistryAuth{Type: authType}
+			if auth.Type != authType {
+				t.Errorf("Type = %s, want %s", auth.Type, authType)
+			}
+		})
+	}
+}
+
+func TestPatternDependency_AllFields(t *testing.T) {
+	dep := PatternDependency{
+		Name:     "base-pattern",
+		Version:  ">=1.0.0",
+		Optional: true,
+	}
+
+	if dep.Name != "base-pattern" {
+		t.Errorf("Name = %s", dep.Name)
+	}
+	if dep.Version != ">=1.0.0" {
+		t.Errorf("Version = %s", dep.Version)
+	}
+	if !dep.Optional {
+		t.Error("Optional should be true")
+	}
+}
+
+func TestPatternDependency_Required(t *testing.T) {
+	dep := PatternDependency{
+		Name:     "required-pattern",
+		Version:  "2.0.0",
+		Optional: false,
+	}
+
+	if dep.Optional {
+		t.Error("Optional should be false")
+	}
 }

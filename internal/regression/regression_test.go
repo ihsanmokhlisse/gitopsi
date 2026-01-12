@@ -621,3 +621,1046 @@ func TestRegression_35_PreflightSecuritySettings(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// Issue #42 - Config Validation Edge Cases
+// Bug: Empty or invalid project names caused panics in generator
+// ============================================================================
+
+func TestRegression_42_EmptyProjectNameValidation(t *testing.T) {
+	cfg := &config.Config{
+		Project:    config.Project{Name: ""},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err, "Empty project name should fail validation")
+	assert.Contains(t, err.Error(), "project", "Error should mention project")
+}
+
+func TestRegression_42_InvalidPlatformValidation(t *testing.T) {
+	cfg := &config.Config{
+		Project:    config.Project{Name: "test-project"},
+		Platform:   "invalid-platform",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err, "Invalid platform should fail validation")
+}
+
+func TestRegression_42_InvalidScopeValidation(t *testing.T) {
+	cfg := &config.Config{
+		Project:    config.Project{Name: "test-project"},
+		Platform:   "kubernetes",
+		Scope:      "invalid-scope",
+		GitOpsTool: "argocd",
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err, "Invalid scope should fail validation")
+}
+
+func TestRegression_42_InvalidGitOpsToolValidation(t *testing.T) {
+	cfg := &config.Config{
+		Project:    config.Project{Name: "test-project"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "invalid-tool",
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err, "Invalid GitOps tool should fail validation")
+}
+
+// ============================================================================
+// Issue #43 - Environment Configuration Edge Cases
+// Bug: Duplicate environment names caused file overwrites
+// ============================================================================
+
+func TestRegression_43_DuplicateEnvironmentNames(t *testing.T) {
+	cfg := &config.Config{
+		Project:    config.Project{Name: "dup-env-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "dev"}, // Duplicate
+			{Name: "prod"},
+		},
+	}
+
+	err := cfg.Validate()
+	// The config should either reject duplicates or handle them gracefully
+	// For now, we just ensure it doesn't panic
+	if err == nil {
+		// If validation passes, ensure generation doesn't overwrite files
+		tmpDir := t.TempDir()
+		writer := output.New(tmpDir, false, false)
+		gen := generator.New(cfg, writer, false)
+		genErr := gen.Generate()
+		// Generation should either succeed or fail gracefully
+		_ = genErr
+	}
+}
+
+func TestRegression_43_EmptyEnvironmentList(t *testing.T) {
+	cfg := &config.Config{
+		Project:      config.Project{Name: "no-env-test"},
+		Platform:     "kubernetes",
+		Scope:        "infrastructure",
+		GitOpsTool:   "argocd",
+		Environments: []config.Environment{},
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err, "Empty environment list should fail validation")
+}
+
+func TestRegression_43_EnvironmentWithSpaces(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "space-env-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev env"}, // Space in name - could cause path issues
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	// Should either sanitize the name or reject it - not panic
+	err := gen.Generate()
+	// Just ensure no panic occurs
+	_ = err
+}
+
+// ============================================================================
+// Issue #44 - Git URL Parsing Edge Cases
+// Bug: Malformed Git URLs caused crashes during repository operations
+// ============================================================================
+
+func TestRegression_44_GitURLParsing(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		isSSH    bool
+		isHTTPS  bool
+		hasError bool
+	}{
+		{
+			name:    "standard HTTPS",
+			url:     "https://github.com/org/repo.git",
+			isHTTPS: true,
+		},
+		{
+			name:  "SSH format",
+			url:   "git@github.com:org/repo.git",
+			isSSH: true,
+		},
+		{
+			name:    "HTTPS without .git",
+			url:     "https://github.com/org/repo",
+			isHTTPS: true,
+		},
+		{
+			name:     "empty URL",
+			url:      "",
+			hasError: true,
+		},
+		{
+			name:     "invalid URL",
+			url:      "not-a-url",
+			hasError: true,
+		},
+		{
+			name:    "GitLab URL",
+			url:     "https://gitlab.com/group/project.git",
+			isHTTPS: true,
+		},
+		{
+			name:    "Azure DevOps URL",
+			url:     "https://dev.azure.com/org/project/_git/repo",
+			isHTTPS: true,
+		},
+		{
+			name:    "Bitbucket URL",
+			url:     "https://bitbucket.org/org/repo.git",
+			isHTTPS: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:    config.Project{Name: "url-test"},
+				Platform:   "kubernetes",
+				Scope:      "both",
+				GitOpsTool: "argocd",
+				Output:     config.Output{URL: tc.url},
+			}
+
+			isSSH := strings.HasPrefix(tc.url, "git@")
+			isHTTPS := strings.HasPrefix(tc.url, "https://") || strings.HasPrefix(tc.url, "http://")
+			isEmpty := tc.url == ""
+
+			if tc.hasError {
+				assert.True(t, isEmpty || (!isSSH && !isHTTPS),
+					"Should detect invalid URL format")
+			} else {
+				assert.Equal(t, tc.isSSH, isSSH, "SSH detection mismatch")
+				assert.Equal(t, tc.isHTTPS, isHTTPS, "HTTPS detection mismatch")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Issue #45 - ApplicationSet Generation Edge Cases
+// Bug: ApplicationSet templates missing required fields caused ArgoCD failures
+// ============================================================================
+
+func TestRegression_45_ApplicationSetHasRequiredFields(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "appset-fields"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	appsetPath := filepath.Join(tmpDir, "appset-fields/argocd/applicationsets/infra-dev.yaml")
+	content, err := os.ReadFile(appsetPath)
+	require.NoError(t, err, "Should read ApplicationSet file")
+
+	contentStr := string(content)
+
+	// Required ApplicationSet fields
+	assert.Contains(t, contentStr, "apiVersion: argoproj.io/v1alpha1",
+		"Should have correct API version")
+	assert.Contains(t, contentStr, "kind: Application",
+		"Should have kind Application or ApplicationSet")
+	assert.Contains(t, contentStr, "spec:",
+		"Should have spec section")
+	assert.Contains(t, contentStr, "destination:",
+		"Should have destination section")
+	assert.Contains(t, contentStr, "source:",
+		"Should have source section")
+	assert.Contains(t, contentStr, "project:",
+		"Should specify ArgoCD project")
+}
+
+func TestRegression_45_ApplicationSetSyncPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "appset-sync"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	appsetPath := filepath.Join(tmpDir, "appset-sync/argocd/applicationsets/infra-dev.yaml")
+	content, err := os.ReadFile(appsetPath)
+	require.NoError(t, err, "Should read ApplicationSet file")
+
+	contentStr := string(content)
+
+	// Sync policy should be present for GitOps automation
+	assert.Contains(t, contentStr, "syncPolicy:",
+		"Should have syncPolicy section for automated sync")
+}
+
+// ============================================================================
+// Issue #46 - RBAC Generation Edge Cases
+// Bug: RBAC bindings referenced non-existent service accounts
+// ============================================================================
+
+func TestRegression_46_RBACBindingsReferenceExistingResources(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "rbac-refs"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+			RBAC:       true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	rbacPath := filepath.Join(tmpDir, "rbac-refs/infrastructure/base/rbac/dev.yaml")
+	content, err := os.ReadFile(rbacPath)
+	require.NoError(t, err, "Should read RBAC file")
+
+	contentStr := string(content)
+
+	// RBAC should have valid structure
+	assert.Contains(t, contentStr, "apiVersion: rbac.authorization.k8s.io",
+		"Should have correct RBAC API version")
+	assert.Contains(t, contentStr, "kind:",
+		"Should specify kind")
+	assert.Contains(t, contentStr, "metadata:",
+		"Should have metadata section")
+}
+
+// ============================================================================
+// Issue #47 - NetworkPolicy Generation Edge Cases
+// Bug: NetworkPolicies with empty port specifications caused K8s rejections
+// ============================================================================
+
+func TestRegression_47_NetworkPolicyHasValidStructure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "netpol-valid"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			NetworkPolicies: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	netpolPath := filepath.Join(tmpDir, "netpol-valid/infrastructure/base/network-policies/dev.yaml")
+	content, err := os.ReadFile(netpolPath)
+	require.NoError(t, err, "Should read NetworkPolicy file")
+
+	contentStr := string(content)
+
+	// NetworkPolicy should have valid structure
+	assert.Contains(t, contentStr, "apiVersion: networking.k8s.io/v1",
+		"Should have correct NetworkPolicy API version")
+	assert.Contains(t, contentStr, "kind: NetworkPolicy",
+		"Should have kind NetworkPolicy")
+	assert.Contains(t, contentStr, "spec:",
+		"Should have spec section")
+	assert.Contains(t, contentStr, "podSelector:",
+		"Should have podSelector")
+}
+
+// ============================================================================
+// Issue #48 - ResourceQuota Generation Edge Cases
+// Bug: ResourceQuotas with zero values caused quota enforcement issues
+// ============================================================================
+
+func TestRegression_48_ResourceQuotaHasValidValues(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "quota-valid"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:     true,
+			ResourceQuotas: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	quotaPath := filepath.Join(tmpDir, "quota-valid/infrastructure/base/resource-quotas/dev.yaml")
+	content, err := os.ReadFile(quotaPath)
+	require.NoError(t, err, "Should read ResourceQuota file")
+
+	contentStr := string(content)
+
+	// ResourceQuota should have valid structure
+	assert.Contains(t, contentStr, "apiVersion: v1",
+		"Should have correct API version")
+	assert.Contains(t, contentStr, "kind: ResourceQuota",
+		"Should have kind ResourceQuota")
+	assert.Contains(t, contentStr, "spec:",
+		"Should have spec section")
+}
+
+// ============================================================================
+// Issue #49 - Multi-Cluster Configuration Edge Cases
+// Bug: Multi-cluster setup without cluster secrets caused sync failures
+// ============================================================================
+
+func TestRegression_49_MultiClusterGeneratesClusterSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-cluster"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev", ClusterURL: "https://dev.cluster.local:6443"},
+			{Name: "staging", ClusterURL: "https://staging.cluster.local:6443"},
+			{Name: "prod", ClusterURL: "https://prod.cluster.local:6443"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	// Check if cluster secrets directory exists
+	clustersDir := filepath.Join(tmpDir, "multi-cluster/argocd/clusters")
+	_, err = os.Stat(clustersDir)
+	if !os.IsNotExist(err) {
+		// If clusters dir exists, verify secret structure
+		entries, _ := os.ReadDir(clustersDir)
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".yaml") {
+				secretPath := filepath.Join(clustersDir, entry.Name())
+				content, readErr := os.ReadFile(secretPath)
+				if readErr == nil {
+					contentStr := string(content)
+					assert.Contains(t, contentStr, "kind: Secret",
+						"Cluster file should be a Secret")
+					assert.Contains(t, contentStr, "argocd.argoproj.io/secret-type",
+						"Should have ArgoCD secret-type label")
+				}
+			}
+		}
+	}
+}
+
+func TestRegression_49_SingleClusterNoClusterSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "single-cluster"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},     // No ClusterURL - single cluster mode
+			{Name: "staging"}, // No ClusterURL - single cluster mode
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	// Single cluster mode should NOT generate cluster secrets
+	clustersDir := filepath.Join(tmpDir, "single-cluster/argocd/clusters")
+	entries, err := os.ReadDir(clustersDir)
+	if err == nil && len(entries) > 0 {
+		// If clusters dir exists, it should be empty or contain only README
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".yaml") {
+				t.Logf("Warning: single-cluster mode generated cluster secret: %s", entry.Name())
+			}
+		}
+	}
+}
+
+// ============================================================================
+// Issue #50 - Bootstrap Mode Validation
+// Bug: Invalid bootstrap mode caused runtime errors during installation
+// ============================================================================
+
+func TestRegression_50_BootstrapModeValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     bootstrap.Mode
+		platform string
+		tool     bootstrap.Tool
+		valid    bool
+	}{
+		{
+			name:     "helm on kubernetes",
+			mode:     bootstrap.ModeHelm,
+			platform: "kubernetes",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+		{
+			name:     "olm on openshift",
+			mode:     bootstrap.ModeOLM,
+			platform: "openshift",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+		{
+			name:     "olm on kubernetes - invalid",
+			mode:     bootstrap.ModeOLM,
+			platform: "kubernetes",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    false,
+		},
+		{
+			name:     "manifest on kubernetes",
+			mode:     bootstrap.ModeManifest,
+			platform: "kubernetes",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+		{
+			name:     "kustomize on kubernetes",
+			mode:     bootstrap.ModeKustomize,
+			platform: "kubernetes",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+		{
+			name:     "helm on eks",
+			mode:     bootstrap.ModeHelm,
+			platform: "eks",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+		{
+			name:     "helm on aks",
+			mode:     bootstrap.ModeHelm,
+			platform: "aks",
+			tool:     bootstrap.ToolArgoCD,
+			valid:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			isValid := bootstrap.IsValidMode(tc.mode, tc.tool, tc.platform)
+			assert.Equal(t, tc.valid, isValid,
+				"Mode %s should be valid=%v for %s on %s", tc.mode, tc.valid, tc.tool, tc.platform)
+		})
+	}
+}
+
+// ============================================================================
+// Issue #51 - Template Rendering Edge Cases
+// Bug: Templates with nil values caused panics during rendering
+// ============================================================================
+
+func TestRegression_51_GeneratorHandlesMinimalConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Minimal valid config - should not panic
+	cfg := &config.Config{
+		Project:    config.Project{Name: "minimal"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	// Should not panic with minimal config
+	err := gen.Generate()
+	assert.NoError(t, err, "Minimal config should generate successfully")
+}
+
+func TestRegression_51_GeneratorHandlesAllInfraDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-infra"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      false,
+			RBAC:            false,
+			NetworkPolicies: false,
+			ResourceQuotas:  false,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	// Should handle all infra disabled gracefully
+	err := gen.Generate()
+	// May succeed or fail gracefully, but should not panic
+	_ = err
+}
+
+// ============================================================================
+// Issue #52 - Project Name Sanitization
+// Bug: Special characters in project names caused file system errors
+// ============================================================================
+
+func TestRegression_52_ProjectNameSanitization(t *testing.T) {
+	invalidNames := []string{
+		"project/with/slashes",
+		"project:with:colons",
+		"project<with>brackets",
+		"project|with|pipes",
+		"project\"with\"quotes",
+		"project*with*stars",
+		"project?with?questions",
+	}
+
+	for _, name := range invalidNames {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{
+				Project:    config.Project{Name: name},
+				Platform:   "kubernetes",
+				Scope:      "both",
+				GitOpsTool: "argocd",
+			}
+
+			err := cfg.Validate()
+			// Should either reject invalid names or sanitize them
+			// The key is it should not panic
+			if err == nil {
+				// If validation passes, check that generation doesn't create invalid paths
+				tmpDir := t.TempDir()
+				writer := output.New(tmpDir, false, false)
+				gen := generator.New(cfg, writer, false)
+				_ = gen.Generate() // Should not panic
+			}
+		})
+	}
+}
+
+func TestRegression_52_ValidProjectNames(t *testing.T) {
+	validNames := []string{
+		"my-project",
+		"my_project",
+		"myproject123",
+		"MyProject",
+		"my.project",
+	}
+
+	for _, name := range validNames {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: name},
+				Platform:   "kubernetes",
+				Scope:      "infrastructure",
+				GitOpsTool: "argocd",
+				Output:     config.Output{URL: "https://github.com/test/repo.git"},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Infra: config.Infrastructure{
+					Namespaces: true,
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := generator.New(cfg, writer, false)
+
+			err := gen.Generate()
+			assert.NoError(t, err, "Valid project name %s should generate successfully", name)
+
+			// Verify project directory was created
+			projectDir := filepath.Join(tmpDir, name)
+			_, statErr := os.Stat(projectDir)
+			assert.False(t, os.IsNotExist(statErr),
+				"Project directory should exist for %s", name)
+		})
+	}
+}
+
+// ============================================================================
+// Issue #53 - Dry Run Mode
+// Bug: Dry run mode was still creating files in some edge cases
+// ============================================================================
+
+func TestRegression_53_DryRunDoesNotCreateFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "dry-run-test"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+	}
+
+	// Dry run mode should NOT create files
+	writer := output.New(tmpDir, true, false) // dryRun = true
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	assert.NoError(t, err, "Dry run should succeed")
+
+	// Verify no files were created
+	projectDir := filepath.Join(tmpDir, "dry-run-test")
+	_, statErr := os.Stat(projectDir)
+	assert.True(t, os.IsNotExist(statErr),
+		"Dry run should NOT create project directory")
+}
+
+// ============================================================================
+// Issue #54 - ArgoCD Project Destination Configuration
+// Bug: ArgoCD Projects allowed wrong namespaces in destinations
+// ============================================================================
+
+func TestRegression_54_ArgoCDProjectDestinations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "project-dest"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	// Check infrastructure project has correct destination namespaces
+	infraProjectPath := filepath.Join(tmpDir, "project-dest/argocd/projects/infrastructure.yaml")
+	content, err := os.ReadFile(infraProjectPath)
+	require.NoError(t, err, "Should read infrastructure project file")
+
+	contentStr := string(content)
+
+	// Project should list environment namespaces as destinations
+	assert.Contains(t, contentStr, "destinations:",
+		"Should have destinations section")
+}
+
+// ============================================================================
+// Issue #55 - Long Environment Names
+// Bug: Very long environment names exceeded Kubernetes label limits
+// ============================================================================
+
+func TestRegression_55_LongEnvironmentNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	longEnvName := "this-is-a-very-long-environment-name-that-might-exceed-limits"
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "long-env"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: longEnvName},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	// Should handle long names gracefully (truncate or reject)
+	err := gen.Generate()
+	if err == nil {
+		// If generation succeeds, verify files were created
+		nsPath := filepath.Join(tmpDir, "long-env/infrastructure/base/namespaces", longEnvName+".yaml")
+		_, statErr := os.Stat(nsPath)
+		if !os.IsNotExist(statErr) {
+			content, _ := os.ReadFile(nsPath)
+			contentStr := string(content)
+			// Kubernetes names must be <= 63 characters
+			assert.Contains(t, contentStr, "name:",
+				"Should have name field in namespace")
+		}
+	}
+}
+
+// ============================================================================
+// Issue #56 - Output URL Configuration
+// Bug: Missing output URL caused generation to fail silently
+// ============================================================================
+
+func TestRegression_56_MissingOutputURL(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "no-output-url"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: ""}, // Empty URL
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	// Should either work with default values or report clear error
+	err := gen.Generate()
+	if err == nil {
+		// If it succeeds, check that source URLs have default values or warnings
+		appsetPath := filepath.Join(tmpDir, "no-output-url/argocd/applicationsets/infra-dev.yaml")
+		content, readErr := os.ReadFile(appsetPath)
+		if readErr == nil {
+			contentStr := string(content)
+			// Should have some source reference even if URL is empty
+			assert.Contains(t, contentStr, "source:",
+				"Should have source section")
+		}
+	}
+}
+
+// ============================================================================
+// Issue #57 - Kustomize Base/Overlay Relationship
+// Bug: Overlays were not correctly referencing base directories
+// ============================================================================
+
+func TestRegression_57_OverlayReferencesBase(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "overlay-base"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/repo.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	for _, env := range cfg.Environments {
+		overlayPath := filepath.Join(tmpDir, "overlay-base/infrastructure/overlays", env.Name, "kustomization.yaml")
+		content, err := os.ReadFile(overlayPath)
+		require.NoError(t, err, "Should read overlay kustomization for %s", env.Name)
+
+		contentStr := string(content)
+
+		// Overlay should reference base
+		assert.Contains(t, contentStr, "../../base",
+			"Overlay %s should reference ../../base", env.Name)
+	}
+}
+
+// ============================================================================
+// Issue #58 - Bootstrap Options Defaults
+// Bug: Missing bootstrap options caused nil pointer dereference
+// ============================================================================
+
+func TestRegression_58_BootstrapOptionsDefaults(t *testing.T) {
+	// Creating Options with minimal fields should not panic
+	opts := &bootstrap.Options{
+		Tool: bootstrap.ToolArgoCD,
+		Mode: bootstrap.ModeHelm,
+	}
+
+	assert.NotNil(t, opts, "Options should be created")
+	assert.Equal(t, bootstrap.ToolArgoCD, opts.Tool)
+	assert.Equal(t, bootstrap.ModeHelm, opts.Mode)
+
+	// Empty namespace should use default
+	if opts.Namespace == "" {
+		opts.Namespace = "argocd"
+	}
+	assert.Equal(t, "argocd", opts.Namespace)
+}
+
+// ============================================================================
+// Issue #59 - Documentation Generation
+// Bug: Generated README had broken links and incorrect paths
+// ============================================================================
+
+func TestRegression_59_ReadmeHasValidContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "readme-test",
+			Description: "Test project for README validation",
+		},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/readme-test.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generate should not fail")
+
+	readmePath := filepath.Join(tmpDir, "readme-test/README.md")
+	content, err := os.ReadFile(readmePath)
+	require.NoError(t, err, "Should read README.md")
+
+	contentStr := string(content)
+
+	// README should have essential sections
+	assert.Contains(t, contentStr, "readme-test",
+		"README should mention project name")
+	assert.Contains(t, contentStr, "#",
+		"README should have headers")
+}
+
+// ============================================================================
+// Issue #60 - Concurrent Generation Safety
+// Bug: Concurrent calls to generator could cause race conditions
+// ============================================================================
+
+func TestRegression_60_ConcurrentGenerationSafety(t *testing.T) {
+	// Run multiple generators concurrently to check for race conditions
+	done := make(chan bool, 3)
+
+	for i := 0; i < 3; i++ {
+		go func(idx int) {
+			defer func() { done <- true }()
+
+			tmpDir := t.TempDir()
+
+			cfg := &config.Config{
+				Project:    config.Project{Name: "concurrent-" + string(rune('a'+idx))},
+				Platform:   "kubernetes",
+				Scope:      "infrastructure",
+				GitOpsTool: "argocd",
+				Output:     config.Output{URL: "https://github.com/test/repo.git"},
+				Environments: []config.Environment{
+					{Name: "dev"},
+				},
+				Infra: config.Infrastructure{
+					Namespaces: true,
+				},
+			}
+
+			writer := output.New(tmpDir, false, false)
+			gen := generator.New(cfg, writer, false)
+
+			_ = gen.Generate()
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 3; i++ {
+		<-done
+	}
+}

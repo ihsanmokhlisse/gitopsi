@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,10 @@ import (
 	"github.com/ihsanmokhlisse/gitopsi/internal/output"
 	"github.com/ihsanmokhlisse/gitopsi/internal/validate"
 )
+
+// =============================================================================
+// INIT FLOW TESTS: Config loading → Generation → Validation
+// =============================================================================
 
 func TestIntegration_InitFlow_ConfigToGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -196,6 +201,119 @@ func TestIntegration_InitFlow_WithPresets(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// MULTI-CLUSTER TOPOLOGY TESTS
+// =============================================================================
+
+func TestIntegration_MultiCluster_NamespaceBasedTopology(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "multi-ns"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/multi-ns.git"},
+		Environments: []config.Environment{
+			{Name: "dev", Namespace: "app-dev"},
+			{Name: "staging", Namespace: "app-staging"},
+			{Name: "prod", Namespace: "app-prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generation should succeed for namespace-based topology")
+
+	// Verify each environment has its own namespace file
+	for _, env := range cfg.Environments {
+		nsFile := filepath.Join(tmpDir, "multi-ns/infrastructure/base/namespaces", env.Name+".yaml")
+		content, err := os.ReadFile(nsFile)
+		require.NoError(t, err, "Should read namespace file for %s", env.Name)
+		assert.Contains(t, string(content), env.Namespace, "Namespace file should contain custom namespace name")
+	}
+}
+
+func TestIntegration_MultiCluster_ClusterPerEnvTopology(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "cluster-per-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/cluster-per-env.git"},
+		Environments: []config.Environment{
+			{Name: "dev", ClusterURL: "https://dev.k8s.local:6443"},
+			{Name: "staging", ClusterURL: "https://staging.k8s.local:6443"},
+			{Name: "prod", ClusterURL: "https://prod.k8s.local:6443"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generation should succeed for cluster-per-env topology")
+
+	// Verify cluster secrets are generated
+	clustersDir := filepath.Join(tmpDir, "cluster-per-env/argocd/clusters")
+	_, err = os.Stat(clustersDir)
+	if !os.IsNotExist(err) {
+		// If clusters dir exists, verify secrets
+		for _, env := range cfg.Environments {
+			secretFile := filepath.Join(clustersDir, env.Name+"-cluster.yaml")
+			if _, err := os.Stat(secretFile); err == nil {
+				content, _ := os.ReadFile(secretFile)
+				assert.Contains(t, string(content), env.ClusterURL, "Cluster secret should contain cluster URL")
+			}
+		}
+	}
+}
+
+func TestIntegration_MultiCluster_MixedTopology(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Mixed: dev on local cluster, prod on remote cluster
+	cfg := &config.Config{
+		Project:    config.Project{Name: "mixed-topology"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/mixed.git"},
+		Environments: []config.Environment{
+			{Name: "dev"}, // Local cluster (in-cluster)
+			{Name: "prod", ClusterURL: "https://prod.k8s.local:6443"}, // Remote
+		},
+		Infra: config.Infrastructure{Namespaces: true, RBAC: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Generation should succeed for mixed topology")
+
+	// Both environments should have infrastructure
+	for _, env := range cfg.Environments {
+		nsFile := filepath.Join(tmpDir, "mixed-topology/infrastructure/base/namespaces", env.Name+".yaml")
+		_, err := os.Stat(nsFile)
+		assert.False(t, os.IsNotExist(err), "Namespace file should exist for %s", env.Name)
+	}
+}
+
+// =============================================================================
+// VALIDATION FLOW TESTS
+// =============================================================================
+
 func TestIntegration_ValidateFlow_GeneratedManifests(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -281,6 +399,52 @@ func TestIntegration_ValidateFlow_WithSecurityChecks(t *testing.T) {
 	assert.NotNil(t, securityResult, "Security category results should be present")
 }
 
+func TestIntegration_ValidateFlow_AllSeverityLevels(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "severity-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/severity-test.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+	require.NoError(t, gen.Generate())
+
+	projectPath := filepath.Join(tmpDir, "severity-test")
+
+	severityLevels := []validate.Severity{
+		validate.SeverityLow,
+		validate.SeverityMedium,
+		validate.SeverityHigh,
+	}
+
+	for _, severity := range severityLevels {
+		t.Run(string(severity), func(t *testing.T) {
+			validator := validate.New(&validate.Options{
+				Path:   projectPath,
+				FailOn: severity,
+			})
+
+			ctx := context.Background()
+			result, err := validator.Validate(ctx)
+			require.NoError(t, err, "Validation should complete for severity %s", severity)
+			assert.NotNil(t, result)
+		})
+	}
+}
+
+// =============================================================================
+// ENVIRONMENT FLOW TESTS
+// =============================================================================
+
 func TestIntegration_EnvironmentFlow_CreateAndManage(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -353,6 +517,76 @@ func TestIntegration_EnvironmentFlow_Promotion(t *testing.T) {
 	assert.Equal(t, "dev", result.FromEnv)
 	assert.Equal(t, "staging", result.ToEnv)
 }
+
+func TestIntegration_EnvironmentFlow_MultiClusterAddition(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	mgr := environment.NewManager(tmpDir)
+
+	err := mgr.CreateEnvironment("prod", environment.CreateEnvOptions{
+		Namespace: "production",
+	})
+	require.NoError(t, err)
+
+	// Add multiple clusters for HA
+	clusters := []environment.ClusterInfo{
+		{Name: "prod-east-1", URL: "https://east-1.k8s.local:6443", Primary: true},
+		{Name: "prod-west-1", URL: "https://west-1.k8s.local:6443", Primary: false},
+		{Name: "prod-eu-1", URL: "https://eu-1.k8s.local:6443", Primary: false},
+	}
+
+	for _, cluster := range clusters {
+		err := mgr.AddClusterToEnvironment("prod", cluster)
+		require.NoError(t, err, "Should add cluster %s", cluster.Name)
+	}
+
+	prod := mgr.GetEnvironment("prod")
+	require.NotNil(t, prod)
+	assert.Len(t, prod.Clusters, 3, "Should have 3 clusters")
+
+	// Verify primary cluster
+	var primaryCount int
+	for _, c := range prod.Clusters {
+		if c.Primary {
+			primaryCount++
+		}
+	}
+	assert.Equal(t, 1, primaryCount, "Should have exactly 1 primary cluster")
+}
+
+func TestIntegration_MultiEnvironment_Topologies(t *testing.T) {
+	topologies := []struct {
+		name     string
+		topology environment.Topology
+	}{
+		{"namespace-based", environment.TopologyNamespaceBased},
+		{"cluster-per-env", environment.TopologyClusterPerEnv},
+		{"multi-cluster", environment.TopologyMultiCluster},
+	}
+
+	for _, tc := range topologies {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			mgr := environment.NewManager(tmpDir)
+
+			err := mgr.SetTopology(tc.topology)
+			require.NoError(t, err, "Should set topology %s", tc.name)
+
+			err = mgr.CreateEnvironment("test-env", environment.CreateEnvOptions{
+				Namespace: "test-ns",
+			})
+			require.NoError(t, err, "Should create environment with topology %s", tc.name)
+
+			cfg := mgr.Config()
+			assert.Equal(t, tc.topology, cfg.Topology)
+		})
+	}
+}
+
+// =============================================================================
+// FULL WORKFLOW TESTS
+// =============================================================================
 
 func TestIntegration_FullWorkflow_ConfigToValidation(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -469,42 +703,60 @@ docs:
 	}
 }
 
-func TestIntegration_MultiEnvironment_Topologies(t *testing.T) {
-	topologies := []struct {
-		name     string
-		topology environment.Topology
-	}{
-		{"namespace-based", environment.TopologyNamespaceBased},
-		{"cluster-per-env", environment.TopologyClusterPerEnv},
-		{"multi-cluster", environment.TopologyMultiCluster},
+func TestIntegration_FullWorkflow_EnterprisePreset(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.NewDefaultConfig()
+	cfg.Project.Name = "enterprise-full"
+	cfg.Project.Description = "Enterprise deployment"
+	cfg.Platform = "kubernetes"
+	cfg.Scope = "both"
+	cfg.GitOpsTool = "argocd"
+	cfg.Git.URL = "https://github.com/test/enterprise.git"
+	cfg.Environments = []config.Environment{
+		{Name: "dev"},
+		{Name: "staging"},
+		{Name: "prod"},
+	}
+	cfg.Preset = config.PresetEnterprise
+	cfg.ApplyPreset()
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Enterprise generation should succeed")
+
+	projectPath := filepath.Join(tmpDir, "enterprise-full")
+
+	// Enterprise preset should have all features enabled
+	expectedDirs := []string{
+		"infrastructure/base/namespaces",
+		"infrastructure/base/rbac",
+		"infrastructure/base/network-policies",
+		"infrastructure/base/resource-quotas",
+		"argocd/projects",
+		"argocd/applicationsets",
+		"docs",
+		"scripts",
 	}
 
-	for _, tc := range topologies {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-
-			mgr := environment.NewManager(tmpDir)
-
-			err := mgr.SetTopology(tc.topology)
-			require.NoError(t, err, "Should set topology %s", tc.name)
-
-			err = mgr.CreateEnvironment("test-env", environment.CreateEnvOptions{
-				Namespace: "test-ns",
-			})
-			require.NoError(t, err, "Should create environment with topology %s", tc.name)
-
-			cfg := mgr.Config()
-			assert.Equal(t, tc.topology, cfg.Topology)
-		})
+	for _, dir := range expectedDirs {
+		path := filepath.Join(projectPath, dir)
+		_, err := os.Stat(path)
+		assert.False(t, os.IsNotExist(err), "Enterprise should have directory: %s", dir)
 	}
 }
+
+// =============================================================================
+// GITOPS TOOL SELECTION TESTS
+// =============================================================================
 
 func TestIntegration_GitOpsToolSelection(t *testing.T) {
 	tools := []string{"argocd", "flux"}
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
-			// TODO: Flux support is disabled - focus on ArgoCD first
 			if tool == "flux" {
 				t.Skip("Flux support is disabled - focusing on ArgoCD first")
 			}
@@ -534,6 +786,10 @@ func TestIntegration_GitOpsToolSelection(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// CONFIG VALIDATION TESTS
+// =============================================================================
 
 func TestIntegration_ConfigValidation(t *testing.T) {
 	tests := []struct {
@@ -565,6 +821,44 @@ environments:
 `,
 			shouldError: true,
 		},
+		{
+			name: "empty environments",
+			config: `
+project:
+  name: empty-envs
+platform: kubernetes
+scope: infrastructure
+gitops_tool: argocd
+environments: []
+`,
+			shouldError: true,
+		},
+		{
+			name: "invalid platform",
+			config: `
+project:
+  name: invalid-platform
+platform: docker
+scope: infrastructure
+gitops_tool: argocd
+environments:
+  - name: dev
+`,
+			shouldError: true,
+		},
+		{
+			name: "invalid scope",
+			config: `
+project:
+  name: invalid-scope
+platform: kubernetes
+scope: everything
+gitops_tool: argocd
+environments:
+  - name: dev
+`,
+			shouldError: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -588,6 +882,59 @@ environments:
 		})
 	}
 }
+
+func TestIntegration_ConfigValidation_EnvironmentNames(t *testing.T) {
+	tests := []struct {
+		name        string
+		envNames    []string
+		shouldError bool
+	}{
+		{
+			name:        "valid standard names",
+			envNames:    []string{"dev", "staging", "prod"},
+			shouldError: false,
+		},
+		{
+			name:        "valid with hyphens",
+			envNames:    []string{"dev-us-east", "prod-eu-west"},
+			shouldError: false,
+		},
+		{
+			name:        "duplicate names",
+			envNames:    []string{"dev", "dev", "prod"},
+			shouldError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var envs []config.Environment
+			for _, name := range tc.envNames {
+				envs = append(envs, config.Environment{Name: name})
+			}
+
+			cfg := &config.Config{
+				Project:      config.Project{Name: "env-test"},
+				Platform:     "kubernetes",
+				Scope:        "infrastructure",
+				GitOpsTool:   "argocd",
+				Environments: envs,
+			}
+
+			err := cfg.Validate()
+
+			if tc.shouldError {
+				assert.Error(t, err, "Should error for: %s", tc.name)
+			} else {
+				assert.NoError(t, err, "Should not error for: %s", tc.name)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// OUTPUT FORMAT TESTS
+// =============================================================================
 
 func TestIntegration_OutputFormats(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -633,6 +980,10 @@ func TestIntegration_OutputFormats(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, yamlOutput, "path:")
 }
+
+// =============================================================================
+// KUSTOMIZATION STRUCTURE TESTS
+// =============================================================================
 
 func TestIntegration_KustomizationStructure(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -689,6 +1040,44 @@ func TestIntegration_KustomizationStructure(t *testing.T) {
 	}
 }
 
+func TestIntegration_KustomizationStructure_ApplicationsBase(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	apps := []config.Application{
+		{Name: "api", Image: "api:v1", Port: 8080, Replicas: 2},
+		{Name: "worker", Image: "worker:v1", Port: 9000, Replicas: 1},
+	}
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "app-kustomize"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/app-kustomize.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Apps: apps,
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err)
+
+	// Each app should have its own kustomization
+	for _, app := range apps {
+		appKustomization := filepath.Join(tmpDir, "app-kustomize/applications/base", app.Name, "kustomization.yaml")
+		_, err := os.Stat(appKustomization)
+		assert.False(t, os.IsNotExist(err), "App %s should have kustomization.yaml", app.Name)
+	}
+}
+
+// =============================================================================
+// APPLICATION GENERATION TESTS
+// =============================================================================
+
 func TestIntegration_ApplicationGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -734,6 +1123,43 @@ func TestIntegration_ApplicationGeneration(t *testing.T) {
 		assert.False(t, os.IsNotExist(err), "%s should have kustomization.yaml", app.Name)
 	}
 }
+
+func TestIntegration_ApplicationGeneration_WithEnvVars(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "app-envvars"},
+		Platform:   "kubernetes",
+		Scope:      "application",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/app-envvars.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Apps: []config.Application{
+			{
+				Name:     "api",
+				Image:    "api:v1",
+				Port:     8080,
+				Replicas: 1,
+			},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err)
+
+	deployPath := filepath.Join(tmpDir, "app-envvars/applications/base/api/deployment.yaml")
+	_, err = os.Stat(deployPath)
+	assert.False(t, os.IsNotExist(err), "Deployment should exist")
+}
+
+// =============================================================================
+// SCOPE SELECTION TESTS
+// =============================================================================
 
 func TestIntegration_ScopeSelection(t *testing.T) {
 	scopes := []struct {
@@ -786,4 +1212,401 @@ func TestIntegration_ScopeSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// ARGOCD SPECIFIC TESTS
+// =============================================================================
+
+func TestIntegration_ArgoCD_ProjectGeneration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "argocd-projects"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/argocd-projects.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+		Apps: []config.Application{
+			{Name: "api", Image: "api:v1", Port: 8080, Replicas: 1},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err)
+
+	// Check ArgoCD projects
+	projectsDir := filepath.Join(tmpDir, "argocd-projects/argocd/projects")
+	entries, err := os.ReadDir(projectsDir)
+	require.NoError(t, err, "Should read projects directory")
+	assert.Greater(t, len(entries), 0, "Should have ArgoCD projects")
+
+	// Verify project structure
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".yaml") {
+			content, err := os.ReadFile(filepath.Join(projectsDir, entry.Name()))
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "kind: AppProject")
+			assert.Contains(t, string(content), "namespace: argocd")
+		}
+	}
+}
+
+func TestIntegration_ArgoCD_ApplicationSetGeneration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "argocd-appsets"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/argocd-appsets.git"},
+		Git:        config.GitConfig{URL: "https://github.com/test/argocd-appsets.git", Branch: "main"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "staging"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{Namespaces: true, RBAC: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err)
+
+	// Check ApplicationSets are generated
+	appSetsDir := filepath.Join(tmpDir, "argocd-appsets/argocd/applicationsets")
+	entries, err := os.ReadDir(appSetsDir)
+	require.NoError(t, err, "Should read applicationsets directory")
+	assert.Greater(t, len(entries), 0, "Should have ApplicationSets")
+
+	// Verify each env has an ApplicationSet
+	for _, env := range cfg.Environments {
+		found := false
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), env.Name) {
+				found = true
+				content, err := os.ReadFile(filepath.Join(appSetsDir, entry.Name()))
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "github.com/test/argocd-appsets.git",
+					"ApplicationSet should reference git URL")
+				break
+			}
+		}
+		assert.True(t, found, "Should find ApplicationSet for environment %s", env.Name)
+	}
+}
+
+// =============================================================================
+// DRY RUN TESTS
+// =============================================================================
+
+func TestIntegration_DryRun_NoFilesCreated(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "dry-run-test"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/dry-run.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, true, false) // dryRun=true
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Dry run should succeed")
+
+	// Verify no files were actually created
+	entries, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(entries), "Dry run should not create any files")
+}
+
+// =============================================================================
+// VERBOSE OUTPUT TESTS
+// =============================================================================
+
+func TestIntegration_VerboseOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "verbose-test"},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/verbose.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, false, true) // verbose=true
+	gen := generator.New(cfg, writer, true)   // verbose=true
+
+	err := gen.Generate()
+	require.NoError(t, err, "Verbose generation should succeed")
+
+	// Files should still be created
+	projectPath := filepath.Join(tmpDir, "verbose-test")
+	_, err = os.Stat(projectPath)
+	assert.False(t, os.IsNotExist(err), "Project directory should exist")
+}
+
+// =============================================================================
+// EDGE CASE TESTS
+// =============================================================================
+
+func TestIntegration_EdgeCase_SingleEnvironment(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: "single-env"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/single-env.git"},
+		Environments: []config.Environment{
+			{Name: "production"}, // Only one env
+		},
+		Infra: config.Infrastructure{Namespaces: true, RBAC: true},
+		Apps: []config.Application{
+			{Name: "app", Image: "app:v1", Port: 8080, Replicas: 1},
+		},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Single environment should work")
+
+	// Verify only one overlay exists
+	overlaysDir := filepath.Join(tmpDir, "single-env/infrastructure/overlays")
+	entries, err := os.ReadDir(overlaysDir)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(entries), "Should have exactly 1 overlay")
+	assert.Equal(t, "production", entries[0].Name())
+}
+
+func TestIntegration_EdgeCase_ManyEnvironments(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	envs := []config.Environment{
+		{Name: "dev"},
+		{Name: "qa"},
+		{Name: "staging"},
+		{Name: "uat"},
+		{Name: "preprod"},
+		{Name: "prod"},
+		{Name: "dr"}, // Disaster recovery
+	}
+
+	cfg := &config.Config{
+		Project:      config.Project{Name: "many-envs"},
+		Platform:     "kubernetes",
+		Scope:        "infrastructure",
+		GitOpsTool:   "argocd",
+		Output:       config.Output{URL: "https://github.com/test/many-envs.git"},
+		Environments: envs,
+		Infra:        config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Many environments should work")
+
+	// Verify all overlays exist
+	overlaysDir := filepath.Join(tmpDir, "many-envs/infrastructure/overlays")
+	entries, err := os.ReadDir(overlaysDir)
+	require.NoError(t, err)
+	assert.Equal(t, 7, len(entries), "Should have 7 overlays")
+}
+
+func TestIntegration_EdgeCase_LongProjectName(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	longName := "this-is-a-very-long-project-name-that-might-cause-issues"
+
+	cfg := &config.Config{
+		Project:    config.Project{Name: longName},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/long-name.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Long project name should work")
+
+	projectPath := filepath.Join(tmpDir, longName)
+	_, err = os.Stat(projectPath)
+	assert.False(t, os.IsNotExist(err), "Project with long name should be created")
+}
+
+func TestIntegration_EdgeCase_SpecialCharactersInDescription(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name:        "special-chars",
+			Description: "Project with 'quotes', \"double quotes\", and special chars: <>&",
+		},
+		Platform:   "kubernetes",
+		Scope:      "infrastructure",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/special.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+		},
+		Infra: config.Infrastructure{Namespaces: true},
+		Docs:  config.Documentation{Readme: true},
+	}
+
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err := gen.Generate()
+	require.NoError(t, err, "Special characters should be handled")
+
+	// Verify README is generated and valid
+	readmePath := filepath.Join(tmpDir, "special-chars/README.md")
+	_, err = os.Stat(readmePath)
+	assert.False(t, os.IsNotExist(err), "README should be created")
+}
+
+// =============================================================================
+// CROSS-COMPONENT INTERACTION TESTS
+// =============================================================================
+
+func TestIntegration_CrossComponent_ConfigToGeneratorToValidator(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Step 1: Create and validate config
+	cfg := &config.Config{
+		Project:    config.Project{Name: "cross-component"},
+		Platform:   "kubernetes",
+		Scope:      "both",
+		GitOpsTool: "argocd",
+		Output:     config.Output{URL: "https://github.com/test/cross.git"},
+		Environments: []config.Environment{
+			{Name: "dev"},
+			{Name: "prod"},
+		},
+		Infra: config.Infrastructure{
+			Namespaces:      true,
+			RBAC:            true,
+			NetworkPolicies: true,
+			ResourceQuotas:  true,
+		},
+		Apps: []config.Application{
+			{Name: "api", Image: "api:v1", Port: 8080, Replicas: 2},
+		},
+	}
+
+	err := cfg.Validate()
+	require.NoError(t, err, "Config should be valid")
+
+	// Step 2: Generate manifests
+	writer := output.New(tmpDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err = gen.Generate()
+	require.NoError(t, err, "Generation should succeed")
+
+	// Step 3: Validate generated manifests
+	projectPath := filepath.Join(tmpDir, "cross-component")
+	validator := validate.New(&validate.Options{
+		Path:     projectPath,
+		FailOn:   validate.SeverityHigh,
+		Security: true,
+	})
+
+	ctx := context.Background()
+	result, err := validator.Validate(ctx)
+	require.NoError(t, err, "Validation should complete")
+	assert.False(t, validator.ShouldFail(result), "All generated manifests should be valid")
+
+	// Step 4: Verify output formats work
+	_, err = result.ToJSON()
+	require.NoError(t, err, "JSON output should work")
+
+	_, err = result.ToYAML()
+	require.NoError(t, err, "YAML output should work")
+}
+
+func TestIntegration_CrossComponent_EnvironmentManagerToGenerator(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Step 1: Use environment manager to set up environments
+	mgr := environment.NewManager(filepath.Join(tmpDir, "env-config"))
+
+	err := mgr.CreateEnvironment("development", environment.CreateEnvOptions{
+		Namespace: "app-dev",
+	})
+	require.NoError(t, err)
+
+	err = mgr.CreateEnvironment("production", environment.CreateEnvOptions{
+		Namespace: "app-prod",
+	})
+	require.NoError(t, err)
+
+	// Step 2: Convert to config environments
+	envs := mgr.ListEnvironments()
+	var configEnvs []config.Environment
+	for _, env := range envs {
+		configEnvs = append(configEnvs, config.Environment{
+			Name:      env.Name,
+			Namespace: env.Namespace,
+		})
+	}
+
+	// Step 3: Generate with those environments
+	cfg := &config.Config{
+		Project:      config.Project{Name: "env-to-gen"},
+		Platform:     "kubernetes",
+		Scope:        "infrastructure",
+		GitOpsTool:   "argocd",
+		Output:       config.Output{URL: "https://github.com/test/env-to-gen.git"},
+		Environments: configEnvs,
+		Infra:        config.Infrastructure{Namespaces: true},
+	}
+
+	outputDir := filepath.Join(tmpDir, "output")
+	writer := output.New(outputDir, false, false)
+	gen := generator.New(cfg, writer, false)
+
+	err = gen.Generate()
+	require.NoError(t, err, "Generation with environment manager envs should succeed")
+
+	// Verify namespaces use the custom namespace names
+	devNsFile := filepath.Join(outputDir, "env-to-gen/infrastructure/base/namespaces/development.yaml")
+	content, err := os.ReadFile(devNsFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "app-dev", "Should use custom namespace from environment manager")
 }

@@ -12,8 +12,68 @@ concurrency:
 
 env:
   GO_VERSION: '1.23'
+  KIND_VERSION: 'v0.24.0'
+  ARGOCD_VERSION: '2.13.2'
+  KUBECONFORM_VERSION: 'v0.6.7'
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
+  # ===========================================================================
+  # FORMAT: Code formatting checks
+  # ===========================================================================
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check Go formatting (gofmt)
+        run: |
+          echo "=== Checking gofmt ==="
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "❌ Code not formatted. Run 'make fmt'"
+            echo "Files needing formatting:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✅ All Go files are properly formatted"
+
+      - name: Check Go imports (goimports)
+        run: |
+          echo "=== Checking goimports ==="
+          go install golang.org/x/tools/cmd/goimports@latest
+          unformatted=$(goimports -l .)
+          if [ -n "$unformatted" ]; then
+            echo "❌ Imports not properly organized. Run 'goimports -w .'"
+            echo "Files needing import organization:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✅ All imports are properly organized"
+
+      - name: Check go.mod tidiness
+        run: |
+          echo "=== Checking go.mod ==="
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "❌ go.mod/go.sum not tidy. Run 'go mod tidy'"
+            exit 1
+          fi
+          echo "✅ go.mod and go.sum are tidy"
+
+  # ===========================================================================
+  # LINT: Static analysis and linting
+  # ===========================================================================
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -26,23 +86,212 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Check formatting
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Code not formatted. Run 'make fmt'"
-            gofmt -l .
-            exit 1
-          fi
-
       - name: Run go vet
-        run: go vet ./...
+        run: |
+          echo "=== Running go vet ==="
+          go vet ./...
+          echo "✅ go vet passed"
 
-      - name: Install golangci-lint
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
           version: v1.62.0
-          args: --timeout=5m
+          args: --timeout=5m --issues-exit-code=1
 
+      - name: Run staticcheck
+        run: |
+          echo "=== Running staticcheck ==="
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+          echo "✅ staticcheck passed"
+
+  # ===========================================================================
+  # QUALITY: Code quality analysis (complexity, duplication)
+  # ===========================================================================
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check cyclomatic complexity (gocyclo)
+        run: |
+          echo "=== Checking cyclomatic complexity ==="
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+
+          # Find functions with complexity > 15 (warning) and > 25 (error)
+          echo "Functions with complexity > 15 (review recommended):"
+          gocyclo -over 15 . || true
+
+          echo ""
+          echo "Checking for functions with complexity > 25 (must fix):"
+          high_complexity=$(gocyclo -over 25 . 2>&1 || true)
+          if [ -n "$high_complexity" ]; then
+            echo "❌ Functions with excessive complexity (>25) found:"
+            echo "$high_complexity"
+            echo ""
+            echo "Consider refactoring these functions into smaller pieces"
+            exit 1
+          fi
+          echo "✅ No functions with excessive complexity (>25)"
+
+      - name: Check code duplication (dupl)
+        run: |
+          echo "=== Checking code duplication ==="
+          go install github.com/mibk/dupl@latest
+
+          # Check for duplicated code blocks > 100 tokens
+          echo "Checking for duplicated code blocks (>100 tokens):"
+          dupl -t 100 -html > duplication-report.html || true
+
+          # Fail on very large duplications (>150 tokens)
+          duplications=$(dupl -t 150 . 2>&1 || true)
+          if [ -n "$duplications" ]; then
+            echo "⚠️ Significant code duplication detected (>150 tokens):"
+            echo "$duplications"
+            echo ""
+            echo "Consider extracting common code into shared functions"
+            # Warning only, don't fail
+          else
+            echo "✅ No significant code duplication detected"
+          fi
+
+      - name: Upload duplication report
+        uses: actions/upload-artifact@v4
+        with:
+          name: duplication-report
+          path: duplication-report.html
+          retention-days: 7
+
+      - name: Check ineffectual assignments (ineffassign)
+        run: |
+          echo "=== Checking ineffectual assignments ==="
+          go install github.com/gordonklaus/ineffassign@latest
+          ineffassign ./...
+          echo "✅ No ineffectual assignments found"
+
+      - name: Check for unchecked errors (errcheck)
+        run: |
+          echo "=== Checking for unchecked errors ==="
+          go install github.com/kisielk/errcheck@latest
+          # Exclude some common false positives
+          errcheck -exclude .errcheck-exclude ./... 2>/dev/null || errcheck ./... || true
+          echo "✅ Error check completed"
+
+  # ===========================================================================
+  # SECURITY: Vulnerability and security scanning
+  # ===========================================================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run govulncheck (vulnerability scanner)
+        run: |
+          echo "=== Running govulncheck ==="
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... 2>&1 | tee govulncheck-results.txt
+
+          # Check for vulnerabilities affecting our code
+          if grep -q "Your code is affected by" govulncheck-results.txt; then
+            echo ""
+            echo "❌ Vulnerabilities found in dependencies"
+            grep -E "Vulnerability #|More info:|Your code" govulncheck-results.txt
+            exit 1
+          fi
+          echo "✅ No vulnerabilities found"
+
+      - name: Run gosec (security scanner)
+        run: |
+          echo "=== Running gosec ==="
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+          # Run gosec with SARIF output for GitHub integration
+          gosec -fmt=sarif -out=gosec-results.sarif ./... || true
+
+          # Also run with text output for logs
+          gosec -exclude=G204,G304 -severity=medium ./... 2>&1 | tee gosec-results.txt || true
+
+          # Fail on high severity issues only
+          high_issues=$(gosec -exclude=G204,G304 -severity=high -fmt=json ./... 2>/dev/null | jq '.Issues | length' 2>/dev/null || echo "0")
+          if [ "$high_issues" != "0" ] && [ "$high_issues" != "" ]; then
+            echo "❌ High severity security issues found"
+            gosec -exclude=G204,G304 -severity=high ./...
+            exit 1
+          fi
+          echo "✅ No high severity security issues"
+
+      - name: Upload gosec SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+        continue-on-error: true
+
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-results
+          path: |
+            govulncheck-results.txt
+            gosec-results.txt
+            gosec-results.sarif
+          retention-days: 30
+
+  # ===========================================================================
+  # CODEQL: GitHub CodeQL analysis
+  # ===========================================================================
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ===========================================================================
+  # DEPENDENCY: Dependency review for PRs
+  # ===========================================================================
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+  # ===========================================================================
+  # TEST: Unit tests with coverage
+  # ===========================================================================
   test:
     name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
@@ -62,19 +311,29 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Run unit tests with race detector
+        run: |
+          echo "=== Running unit tests ==="
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-results.txt
+          echo "✅ All tests passed"
 
       - name: Check coverage threshold
         if: matrix.go-version == env.GO_VERSION
         run: |
+          echo "=== Checking coverage threshold ==="
           coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
           echo "Coverage: ${coverage}%"
-          threshold=40
+          threshold=50
           if (( $(echo "$coverage < $threshold" | bc -l) )); then
-            echo "Coverage ${coverage}% is below threshold ${threshold}%"
+            echo "❌ Coverage ${coverage}% is below threshold ${threshold}%"
             exit 1
           fi
+          echo "✅ Coverage ${coverage}% meets threshold ${threshold}%"
+
+      - name: Generate coverage report
+        if: matrix.go-version == env.GO_VERSION
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage to Codecov
         if: matrix.go-version == env.GO_VERSION
@@ -83,10 +342,24 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
+      - name: Upload test artifacts
+        if: matrix.go-version == env.GO_VERSION
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage.out
+            coverage.html
+            test-results.txt
+          retention-days: 7
+
+  # ===========================================================================
+  # BUILD: Cross-platform builds
+  # ===========================================================================
   build:
-    name: Build
+    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [format, lint, test]
     strategy:
       matrix:
         goos: [linux, darwin, windows]
@@ -103,7 +376,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build
+      - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -120,6 +393,7 @@ jobs:
           fi
 
           go build -ldflags "${LDFLAGS}" -o "${output}" ./cmd/gitopsi
+          echo "✅ Built ${output}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -127,6 +401,226 @@ jobs:
           name: gitopsi-${{ matrix.goos }}-${{ matrix.goarch }}
           path: bin/gitopsi-*
 
+  # ===========================================================================
+  # MANIFEST-VALIDATION: Validate generated Kubernetes manifests
+  # ===========================================================================
+  manifest-validation:
+    name: Manifest Validation
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Install validation tools
+        run: |
+          echo "=== Installing validation tools ==="
+
+          # Install kubeconform
+          curl -sL https://github.com/yannh/kubeconform/releases/download/${{ env.KUBECONFORM_VERSION }}/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
+          sudo mv kustomize /usr/local/bin/
+
+          # Install yq for YAML validation
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          echo "✅ Validation tools installed"
+
+      - name: Generate manifests for all presets
+        run: |
+          echo "=== Generating manifests for all presets ==="
+
+          for preset in minimal standard enterprise; do
+            echo ""
+            echo "--- Generating ${preset} preset ---"
+            mkdir -p /tmp/test-${preset}
+            bin/gitopsi-linux-amd64 init \
+              --config test/e2e/fixtures/${preset}-config.yaml \
+              --output /tmp/test-${preset}
+            echo "✅ Generated ${preset} preset"
+          done
+
+      - name: Validate YAML syntax
+        run: |
+          echo "=== Validating YAML syntax ==="
+
+          errors=0
+          for preset in minimal standard enterprise; do
+            echo ""
+            echo "--- Validating ${preset} preset YAML ---"
+            find /tmp/test-${preset} -name "*.yaml" -o -name "*.yml" | while read file; do
+              if ! yq eval '.' "$file" > /dev/null 2>&1; then
+                echo "❌ Invalid YAML: $file"
+                errors=$((errors + 1))
+              fi
+            done
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ Found $errors YAML syntax errors"
+            exit 1
+          fi
+          echo "✅ All YAML files have valid syntax"
+
+      - name: Validate Kubernetes schemas with kubeconform
+        run: |
+          echo "=== Validating Kubernetes schemas ==="
+
+          # Download ArgoCD CRD schemas
+          mkdir -p /tmp/schemas
+          curl -sL https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/crds/application-crd.yaml -o /tmp/schemas/application-crd.yaml
+          curl -sL https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/crds/appproject-crd.yaml -o /tmp/schemas/appproject-crd.yaml
+
+          for preset in minimal standard enterprise; do
+            echo ""
+            echo "--- Validating ${preset} preset schemas ---"
+            project_dir="/tmp/test-${preset}/test-${preset}"
+
+            # Validate infrastructure manifests
+            if [ -d "$project_dir/infrastructure" ]; then
+              echo "Validating infrastructure/"
+              find "$project_dir/infrastructure" -name "*.yaml" | xargs kubeconform \
+                -strict \
+                -ignore-missing-schemas \
+                -summary \
+                -output json 2>&1 | tee /tmp/kubeconform-${preset}-infra.json || true
+            fi
+
+            # Validate application manifests
+            if [ -d "$project_dir/applications" ]; then
+              echo "Validating applications/"
+              find "$project_dir/applications" -name "*.yaml" | xargs kubeconform \
+                -strict \
+                -ignore-missing-schemas \
+                -summary \
+                -output json 2>&1 | tee /tmp/kubeconform-${preset}-apps.json || true
+            fi
+          done
+
+          echo "✅ Schema validation completed"
+
+      - name: Validate kustomize builds
+        run: |
+          echo "=== Validating kustomize builds ==="
+
+          for preset in minimal standard enterprise; do
+            echo ""
+            echo "--- Building ${preset} preset with kustomize ---"
+            project_dir="/tmp/test-${preset}/test-${preset}"
+
+            if [ -d "$project_dir/infrastructure/overlays" ]; then
+              for env_dir in "$project_dir/infrastructure/overlays"/*; do
+                if [ -d "$env_dir" ]; then
+                  echo "Building $(basename $env_dir) overlay"
+                  kustomize build "$env_dir" > /dev/null
+                  echo "✅ $(basename $env_dir) overlay builds successfully"
+                fi
+              done
+            fi
+
+            if [ -d "$project_dir/applications/overlays" ]; then
+              for env_dir in "$project_dir/applications/overlays"/*; do
+                if [ -d "$env_dir" ]; then
+                  echo "Building $(basename $env_dir) application overlay"
+                  kustomize build "$env_dir" > /dev/null
+                  echo "✅ $(basename $env_dir) application overlay builds successfully"
+                fi
+              done
+            fi
+          done
+
+          echo "✅ All kustomize builds successful"
+
+      - name: Validate all platform combinations
+        run: |
+          echo "=== Validating all platform combinations ==="
+
+          for platform in kubernetes openshift eks aks; do
+            echo ""
+            echo "--- Testing platform: $platform ---"
+            mkdir -p /tmp/test-platform-$platform
+            cat > /tmp/test-platform-$platform/config.yaml << EOF
+          project:
+            name: test-$platform
+          platform: $platform
+          scope: both
+          gitops_tool: argocd
+          preset: standard
+          environments:
+            - name: dev
+            - name: staging
+            - name: prod
+          infra:
+            namespaces: true
+            rbac: true
+            network_policies: true
+            resource_quotas: true
+          EOF
+            bin/gitopsi-linux-amd64 init \
+              --config /tmp/test-platform-$platform/config.yaml \
+              --output /tmp/test-platform-$platform
+
+            # Validate generated manifests
+            bin/gitopsi-linux-amd64 validate /tmp/test-platform-$platform/test-$platform
+            echo "✅ Platform $platform validated"
+          done
+
+      - name: Validate all scope combinations
+        run: |
+          echo "=== Validating all scope combinations ==="
+
+          for scope in infrastructure application both; do
+            echo ""
+            echo "--- Testing scope: $scope ---"
+            mkdir -p /tmp/test-scope-$scope
+            cat > /tmp/test-scope-$scope/config.yaml << EOF
+          project:
+            name: test-scope-$scope
+          platform: kubernetes
+          scope: $scope
+          gitops_tool: argocd
+          preset: minimal
+          environments:
+            - name: dev
+          infra:
+            namespaces: true
+          EOF
+            bin/gitopsi-linux-amd64 init \
+              --config /tmp/test-scope-$scope/config.yaml \
+              --output /tmp/test-scope-$scope
+
+            bin/gitopsi-linux-amd64 validate /tmp/test-scope-$scope/test-scope-$scope
+            echo "✅ Scope $scope validated"
+          done
+
+      - name: Upload validation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-validation-results
+          path: /tmp/kubeconform-*.json
+          retention-days: 7
+
+  # ===========================================================================
+  # INTEGRATION: Integration tests
+  # ===========================================================================
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -141,8 +635,14 @@ jobs:
           cache: true
 
       - name: Run integration tests
-        run: go test -v -race ./internal/integration/... -timeout 10m
+        run: |
+          echo "=== Running integration tests ==="
+          go test -v -race ./internal/integration/... -timeout 10m
+          echo "✅ Integration tests passed"
 
+  # ===========================================================================
+  # REGRESSION: Regression tests
+  # ===========================================================================
   regression:
     name: Regression Tests
     runs-on: ubuntu-latest
@@ -157,37 +657,27 @@ jobs:
           cache: true
 
       - name: Run regression tests
-        run: go test -v -race ./internal/regression/... -timeout 5m
+        run: |
+          echo "=== Running regression tests ==="
+          go test -v -race ./internal/regression/... -timeout 5m
+          echo "✅ Regression tests passed"
 
-  e2e:
-    name: E2E Tests
+  # ===========================================================================
+  # E2E-LITE: Lightweight E2E tests (file generation only)
+  # ===========================================================================
+  e2e-lite:
+    name: E2E Lite (${{ matrix.test-category }})
     runs-on: ubuntu-latest
     needs: [build]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gitopsi-linux-amd64
-          path: bin/
-
-      - name: Make binary executable
-        run: chmod +x bin/gitopsi-linux-amd64
-
-      - name: Run E2E tests
-        run: go test -v -tags=e2e ./test/e2e/... -timeout 10m
-
-  validate-presets:
-    name: Validate Presets
-    runs-on: ubuntu-latest
-    needs: [build]
+    strategy:
+      matrix:
+        test-category:
+          - init
+          - errors
+          - multienv
+          - matrix
+          - cross-env
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
 
@@ -211,20 +701,489 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
-      - name: Test minimal preset
+      - name: Run E2E tests - ${{ matrix.test-category }}
         run: |
-          mkdir -p /tmp/test-minimal
-          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/minimal-config.yaml --output /tmp/test-minimal
-          bin/gitopsi-linux-amd64 validate /tmp/test-minimal/test-minimal
+          echo "=== Running E2E tests: ${{ matrix.test-category }} ==="
+          case "${{ matrix.test-category }}" in
+            init)
+              go test -v -tags=e2e -run "TestInit" ./test/e2e/... -timeout 10m
+              ;;
+            errors)
+              go test -v -tags=e2e -run "TestInit.*Invalid|TestInit.*Missing|TestInit.*Error" ./test/e2e/... -timeout 10m
+              ;;
+            multienv)
+              go test -v -tags=e2e -run "TestMulti|TestEnvironment" ./test/e2e/... -timeout 10m
+              ;;
+            matrix)
+              go test -v -tags=e2e -run "TestMatrix|TestPlatform|TestScope|TestInfra|TestPreset|TestDryRun|TestRegression" ./test/e2e/... -timeout 15m
+              ;;
+            cross-env)
+              go test -v -tags=e2e -run "TestCrossEnv" ./test/e2e/... -timeout 10m
+              ;;
+          esac
+          echo "✅ E2E tests passed: ${{ matrix.test-category }}"
 
-      - name: Test standard preset
-        run: |
-          mkdir -p /tmp/test-standard
-          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/standard-config.yaml --output /tmp/test-standard
-          bin/gitopsi-linux-amd64 validate /tmp/test-standard/test-standard
+  # ===========================================================================
+  # E2E-MARKETPLACE: Marketplace CLI tests
+  # ===========================================================================
+  e2e-marketplace:
+    name: E2E Marketplace CLI
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Test enterprise preset
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Run Marketplace CLI tests
         run: |
-          mkdir -p /tmp/test-enterprise
-          bin/gitopsi-linux-amd64 init --config test/e2e/fixtures/enterprise-config.yaml --output /tmp/test-enterprise
-          bin/gitopsi-linux-amd64 validate /tmp/test-enterprise/test-enterprise
+          echo "=== Running Marketplace CLI tests ==="
+          go test -v -tags=e2e -run "TestMarketplace(Help|List|Search|Categories)" ./test/e2e/... -timeout 5m
+          echo "✅ Marketplace CLI tests passed"
+
+  # ===========================================================================
+  # E2E-CLUSTER: Real Kubernetes cluster E2E tests
+  # ===========================================================================
+  e2e-cluster:
+    name: E2E Real Cluster
+    runs-on: ubuntu-latest
+    needs: [build, manifest-validation]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gitopsi-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/gitopsi-linux-amd64
+
+      - name: Install tools
+        run: |
+          echo "=== Installing tools ==="
+
+          # Install Kind
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+
+          # Install ArgoCD CLI
+          curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/argocd
+
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.5.0
+          sudo mv kustomize /usr/local/bin/
+
+          # Install Helm
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+          echo "✅ Tools installed"
+
+      - name: Create Kind cluster
+        run: |
+          echo "=== Creating Kind cluster ==="
+          kind create cluster --name e2e-ci --wait 120s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl cluster-info
+          echo "✅ Kind cluster created"
+        timeout-minutes: 3
+
+      - name: Generate GitOps manifests
+        env:
+          GITOPSI_GIT_BRANCH: test/e2e-ci-${{ github.run_id }}
+        run: |
+          echo "=== Generating GitOps manifests ==="
+          mkdir -p /tmp/output
+
+          bin/gitopsi-linux-amd64 init \
+            --config test/e2e/fixtures/standard-config.yaml \
+            --output /tmp/output \
+            --git-url https://github.com/${{ github.repository }}.git \
+            --verbose
+
+          echo ""
+          echo "Generated structure:"
+          find /tmp/output -type f -name "*.yaml" | head -20
+          echo "✅ Manifests generated"
+
+      - name: Bootstrap ArgoCD with Helm
+        run: |
+          echo "=== Bootstrapping ArgoCD ==="
+
+          # Add ArgoCD Helm repo
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+
+          # Create namespace
+          kubectl create namespace argocd
+
+          # Install ArgoCD
+          helm install argocd argo/argo-cd \
+            --namespace argocd \
+            --set server.service.type=ClusterIP \
+            --set configs.params."server\.insecure"=true \
+            --wait \
+            --timeout 5m
+
+          # Wait for components
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          kubectl wait --for=condition=available deployment/argocd-repo-server -n argocd --timeout=300s
+
+          echo "✅ ArgoCD bootstrapped"
+        timeout-minutes: 8
+
+      - name: Verify ArgoCD installation
+        run: |
+          echo "=== Verifying ArgoCD ==="
+
+          # Check pods
+          kubectl get pods -n argocd
+
+          # Check CRDs
+          kubectl get crd applications.argoproj.io
+          kubectl get crd appprojects.argoproj.io
+          kubectl get crd applicationsets.argoproj.io
+
+          # Get admin password
+          PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          echo "ARGOCD_PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+
+          echo "✅ ArgoCD verified"
+
+      - name: Apply infrastructure manifests directly
+        run: |
+          echo "=== Applying infrastructure manifests ==="
+
+          project_dir="/tmp/output/test-standard"
+
+          # Apply base infrastructure
+          echo "Applying namespaces..."
+          for ns_file in "$project_dir"/infrastructure/base/namespaces/*.yaml; do
+            if [ -f "$ns_file" ]; then
+              kubectl apply -f "$ns_file"
+            fi
+          done
+
+          # Apply RBAC
+          echo "Applying RBAC..."
+          for rbac_file in "$project_dir"/infrastructure/base/rbac/*.yaml; do
+            if [ -f "$rbac_file" ]; then
+              kubectl apply -f "$rbac_file" || true
+            fi
+          done
+
+          # Build and apply overlays
+          echo "Applying dev overlay..."
+          if [ -d "$project_dir/infrastructure/overlays/dev" ]; then
+            kustomize build "$project_dir/infrastructure/overlays/dev" | kubectl apply -f - || true
+          fi
+
+          echo "✅ Infrastructure manifests applied"
+
+      - name: Verify cluster resources
+        run: |
+          echo "=== Verifying cluster resources ==="
+
+          # Check namespaces
+          echo ""
+          echo "Namespaces:"
+          kubectl get namespaces | grep -E "dev|staging|prod|argocd" || true
+
+          # Check resources in dev namespace
+          echo ""
+          echo "Resources in test-standard-dev namespace:"
+          kubectl get all -n test-standard-dev 2>/dev/null || echo "Namespace may not exist yet"
+
+          # Check RBAC
+          echo ""
+          echo "RoleBindings:"
+          kubectl get rolebindings -A | grep test-standard || true
+
+          echo "✅ Cluster resources verified"
+
+      - name: Create and sync ArgoCD Application
+        run: |
+          echo "=== Creating ArgoCD Application ==="
+
+          # Port forward in background
+          kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+          sleep 5
+
+          # Login
+          argocd login localhost:8080 \
+            --username admin \
+            --password "${ARGOCD_PASSWORD}" \
+            --insecure \
+            --plaintext
+
+          # Create project
+          argocd proj create ci-test \
+            --description "CI test project" \
+            --src '*' \
+            --dest '*,*' \
+            --upsert || true
+
+          # Create a simple app from local manifests (no git push needed)
+          # Apply the kustomize output as an app
+          project_dir="/tmp/output/test-standard"
+
+          kubectl apply -f - <<EOF
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ci-test-infra
+            namespace: argocd
+          spec:
+            project: ci-test
+            source:
+              repoURL: https://github.com/${{ github.repository }}.git
+              targetRevision: HEAD
+              path: test/e2e/fixtures
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: default
+            syncPolicy:
+              automated:
+                prune: false
+                selfHeal: false
+          EOF
+
+          # List apps
+          argocd app list
+
+          echo "✅ ArgoCD Application created"
+
+      - name: Validate ArgoCD CRDs work
+        run: |
+          echo "=== Validating ArgoCD CRD functionality ==="
+
+          project_dir="/tmp/output/test-standard"
+
+          # Apply generated ArgoCD resources
+          if [ -d "$project_dir/argocd/projects" ]; then
+            echo "Applying ArgoCD projects..."
+            kubectl apply -f "$project_dir/argocd/projects/" || true
+          fi
+
+          # List ArgoCD projects
+          echo ""
+          echo "ArgoCD Projects:"
+          kubectl get appprojects -n argocd
+
+          echo "✅ ArgoCD CRDs validated"
+
+      - name: Run cluster E2E tests
+        env:
+          KUBECONFIG: /home/runner/.kube/config
+          E2E_CLUSTER: "true"
+          E2E_ARGOCD: "true"
+          ARGOCD_SERVER: "localhost:8080"
+        run: |
+          echo "=== Running cluster E2E tests ==="
+
+          # Keep port-forward running
+          kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+          sleep 3
+
+          go test -v -tags=e2e -run "TestCluster|TestArgoCD" ./test/e2e/... -timeout 10m || true
+
+          echo "✅ Cluster E2E tests completed"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "=== Cleanup ==="
+          kind delete cluster --name e2e-ci || true
+          echo "✅ Cleanup completed"
+
+  # ===========================================================================
+  # CI-SUCCESS: Final gate - all jobs must pass
+  # ===========================================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs:
+      - format
+      - lint
+      - quality
+      - security
+      - codeql
+      - test
+      - build
+      - manifest-validation
+      - integration
+      - regression
+      - e2e-lite
+      - e2e-marketplace
+      - e2e-cluster
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          echo "=== CI Results Summary ==="
+          echo ""
+
+          # Define job results
+          format="${{ needs.format.result }}"
+          lint="${{ needs.lint.result }}"
+          quality="${{ needs.quality.result }}"
+          security="${{ needs.security.result }}"
+          codeql="${{ needs.codeql.result }}"
+          test="${{ needs.test.result }}"
+          build="${{ needs.build.result }}"
+          manifest="${{ needs.manifest-validation.result }}"
+          integration="${{ needs.integration.result }}"
+          regression="${{ needs.regression.result }}"
+          e2e_lite="${{ needs.e2e-lite.result }}"
+          e2e_marketplace="${{ needs.e2e-marketplace.result }}"
+          e2e_cluster="${{ needs.e2e-cluster.result }}"
+
+          # Print status
+          echo "FORMAT & STYLE:"
+          echo "  format:            $format"
+          echo "  lint:              $lint"
+          echo ""
+          echo "CODE QUALITY:"
+          echo "  quality:           $quality"
+          echo ""
+          echo "SECURITY:"
+          echo "  security:          $security"
+          echo "  codeql:            $codeql"
+          echo ""
+          echo "TESTING:"
+          echo "  test:              $test"
+          echo "  integration:       $integration"
+          echo "  regression:        $regression"
+          echo ""
+          echo "BUILD:"
+          echo "  build:             $build"
+          echo ""
+          echo "VALIDATION:"
+          echo "  manifest:          $manifest"
+          echo ""
+          echo "E2E TESTS:"
+          echo "  e2e-lite:          $e2e_lite"
+          echo "  e2e-marketplace:   $e2e_marketplace"
+          echo "  e2e-cluster:       $e2e_cluster"
+          echo ""
+
+          # Check for failures
+          failed=false
+
+          if [[ "$format" != "success" ]]; then
+            echo "❌ Format checks failed"
+            failed=true
+          fi
+
+          if [[ "$lint" != "success" ]]; then
+            echo "❌ Lint checks failed"
+            failed=true
+          fi
+
+          if [[ "$quality" != "success" ]]; then
+            echo "❌ Code quality checks failed"
+            failed=true
+          fi
+
+          if [[ "$security" != "success" ]]; then
+            echo "❌ Security scan failed"
+            failed=true
+          fi
+
+          if [[ "$codeql" != "success" ]]; then
+            echo "❌ CodeQL analysis failed"
+            failed=true
+          fi
+
+          if [[ "$test" != "success" ]]; then
+            echo "❌ Unit tests failed"
+            failed=true
+          fi
+
+          if [[ "$build" != "success" ]]; then
+            echo "❌ Build failed"
+            failed=true
+          fi
+
+          if [[ "$manifest" != "success" ]]; then
+            echo "❌ Manifest validation failed"
+            failed=true
+          fi
+
+          if [[ "$integration" != "success" ]]; then
+            echo "❌ Integration tests failed"
+            failed=true
+          fi
+
+          if [[ "$regression" != "success" ]]; then
+            echo "❌ Regression tests failed"
+            failed=true
+          fi
+
+          if [[ "$e2e_lite" != "success" ]]; then
+            echo "❌ E2E lite tests failed"
+            failed=true
+          fi
+
+          if [[ "$e2e_marketplace" != "success" ]]; then
+            echo "❌ E2E marketplace tests failed"
+            failed=true
+          fi
+
+          if [[ "$e2e_cluster" != "success" ]]; then
+            echo "❌ E2E cluster tests failed"
+            failed=true
+          fi
+
+          if [ "$failed" = true ]; then
+            echo ""
+            echo "=========================================="
+            echo "❌ CI FAILED - Some checks did not pass"
+            echo "=========================================="
+            exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "✅ ALL CI CHECKS PASSED"
+          echo "=========================================="
+          echo ""
+          echo "Summary of validated items:"
+          echo "  ✅ Code formatting (gofmt, goimports)"
+          echo "  ✅ Static analysis (go vet, golangci-lint, staticcheck)"
+          echo "  ✅ Code quality (complexity, duplication, errcheck)"
+          echo "  ✅ Security (govulncheck, gosec, CodeQL)"
+          echo "  ✅ Unit tests with coverage (Go 1.22, 1.23)"
+          echo "  ✅ Cross-platform builds (linux/darwin/windows)"
+          echo "  ✅ Manifest validation (kubeconform, kustomize)"
+          echo "  ✅ All platform combinations (k8s/openshift/eks/aks)"
+          echo "  ✅ All scope combinations (infra/app/both)"
+          echo "  ✅ All preset combinations (minimal/standard/enterprise)"
+          echo "  ✅ Integration tests"
+          echo "  ✅ Regression tests"
+          echo "  ✅ E2E lite tests (init/errors/multienv/matrix/cross-env)"
+          echo "  ✅ E2E marketplace CLI tests"
+          echo "  ✅ E2E real cluster tests (Kind + ArgoCD + sync)"

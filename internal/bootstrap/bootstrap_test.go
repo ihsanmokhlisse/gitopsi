@@ -754,7 +754,7 @@ func TestGetArgoCDOLMConfig_PartialCustom(t *testing.T) {
 	b := New(nil, &Options{
 		Tool: ToolArgoCD,
 		Mode: ModeOLM,
-		OLM: &OLMConfig{
+		OLM:  &OLMConfig{
 			// All empty - should use defaults
 		},
 	})
@@ -1145,7 +1145,7 @@ func TestGetArgoCDHelmConfig_CustomSetValues(t *testing.T) {
 		Mode: ModeHelm,
 		Helm: &HelmConfig{
 			SetValues: map[string]string{
-				"server.insecure":   "true",
+				"server.insecure":     "true",
 				"controller.replicas": "2",
 			},
 		},

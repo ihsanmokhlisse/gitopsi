@@ -78,77 +78,77 @@ func (m *TestMatrix) GenerateTestCases() []MatrixTestCase {
 	criticalCases := []MatrixTestCase{
 		// Minimal Kubernetes ArgoCD
 		{
-			Name: "kubernetes-minimal-argocd-1env",
+			Name:     "kubernetes-minimal-argocd-1env",
 			Platform: "kubernetes", Scope: "infrastructure", GitOpsTool: "argocd", Preset: "minimal",
 			Envs: []string{"dev"}, Infra: m.InfraFlags[0],
 			ExpectDirs: []string{"infrastructure", "argocd", "docs"},
 		},
 		// Standard Kubernetes ArgoCD
 		{
-			Name: "kubernetes-standard-argocd-3env",
+			Name:     "kubernetes-standard-argocd-3env",
 			Platform: "kubernetes", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd", "docs", "scripts"},
 		},
 		// Enterprise Kubernetes
 		{
-			Name: "kubernetes-enterprise-argocd-3env",
+			Name:     "kubernetes-enterprise-argocd-3env",
 			Platform: "kubernetes", Scope: "both", GitOpsTool: "argocd", Preset: "enterprise",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd", "docs", "scripts", "bootstrap"},
 		},
 		// OpenShift variants
 		{
-			Name: "openshift-standard-argocd-3env",
+			Name:     "openshift-standard-argocd-3env",
 			Platform: "openshift", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},
 		},
 		// EKS variant
 		{
-			Name: "eks-standard-argocd-3env",
+			Name:     "eks-standard-argocd-3env",
 			Platform: "eks", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},
 		},
 		// AKS variant
 		{
-			Name: "aks-standard-argocd-3env",
+			Name:     "aks-standard-argocd-3env",
 			Platform: "aks", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},
 		},
 		// Infrastructure only
 		{
-			Name: "kubernetes-infra-only-3env",
+			Name:     "kubernetes-infra-only-3env",
 			Platform: "kubernetes", Scope: "infrastructure", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "argocd"},
 		},
 		// Application only
 		{
-			Name: "kubernetes-app-only-3env",
+			Name:     "kubernetes-app-only-3env",
 			Platform: "kubernetes", Scope: "application", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "staging", "prod"}, Infra: m.InfraFlags[0],
 			ExpectDirs: []string{"applications", "argocd"},
 		},
 		// Single environment
 		{
-			Name: "kubernetes-single-env",
+			Name:     "kubernetes-single-env",
 			Platform: "kubernetes", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"production"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},
 		},
 		// Many environments
 		{
-			Name: "kubernetes-many-envs",
+			Name:     "kubernetes-many-envs",
 			Platform: "kubernetes", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"dev", "test", "staging", "uat", "prod"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},
 		},
 		// Custom environment names
 		{
-			Name: "kubernetes-custom-env-names",
+			Name:     "kubernetes-custom-env-names",
 			Platform: "kubernetes", Scope: "both", GitOpsTool: "argocd", Preset: "standard",
 			Envs: []string{"development", "qa-testing", "production-us"}, Infra: m.InfraFlags[3],
 			ExpectDirs: []string{"infrastructure", "applications", "argocd"},

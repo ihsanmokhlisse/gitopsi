@@ -804,7 +804,8 @@ func TestRegression_44_GitURLParsing(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{
+			// Config used to validate URL is stored properly
+			_ = &config.Config{
 				Project:    config.Project{Name: "url-test"},
 				Platform:   "kubernetes",
 				Scope:      "both",
@@ -1059,9 +1060,9 @@ func TestRegression_49_MultiClusterGeneratesClusterSecrets(t *testing.T) {
 		GitOpsTool: "argocd",
 		Output:     config.Output{URL: "https://github.com/test/repo.git"},
 		Environments: []config.Environment{
-			{Name: "dev", ClusterURL: "https://dev.cluster.local:6443"},
-			{Name: "staging", ClusterURL: "https://staging.cluster.local:6443"},
-			{Name: "prod", ClusterURL: "https://prod.cluster.local:6443"},
+			{Name: "dev", Cluster: "https://dev.cluster.local:6443"},
+			{Name: "staging", Cluster: "https://staging.cluster.local:6443"},
+			{Name: "prod", Cluster: "https://prod.cluster.local:6443"},
 		},
 		Infra: config.Infrastructure{
 			Namespaces: true,

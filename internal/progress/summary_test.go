@@ -219,7 +219,7 @@ func TestClusterInfo_AllFields(t *testing.T) {
 	}
 }
 
-func TestClusterInfo_EmptyNamespaces(t *testing.T) {
+func TestClusterInfo_NilNamespaces_Minimal(t *testing.T) {
 	cluster := ClusterInfo{
 		Name:       "minimal",
 		Namespaces: nil,

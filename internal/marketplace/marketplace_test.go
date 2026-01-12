@@ -2001,13 +2001,13 @@ func TestNewRegistryManager_EmptyCacheDir(t *testing.T) {
 	}
 }
 
-func TestRegistryManager_GetRegistries_Empty(t *testing.T) {
+func TestRegistryManager_ListRegistries_Empty(t *testing.T) {
 	rm := NewRegistryManager("")
 
-	registries := rm.GetRegistries()
+	registries := rm.ListRegistries()
 	// Should return default registries
 	if registries == nil {
-		t.Error("GetRegistries should not return nil")
+		t.Error("ListRegistries should not return nil")
 	}
 }
 

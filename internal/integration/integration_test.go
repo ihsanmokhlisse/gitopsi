@@ -251,9 +251,9 @@ func TestIntegration_MultiCluster_ClusterPerEnvTopology(t *testing.T) {
 		GitOpsTool: "argocd",
 		Output:     config.Output{URL: "https://github.com/test/cluster-per-env.git"},
 		Environments: []config.Environment{
-			{Name: "dev", ClusterURL: "https://dev.k8s.local:6443"},
-			{Name: "staging", ClusterURL: "https://staging.k8s.local:6443"},
-			{Name: "prod", ClusterURL: "https://prod.k8s.local:6443"},
+			{Name: "dev", Cluster: "https://dev.k8s.local:6443"},
+			{Name: "staging", Cluster: "https://staging.k8s.local:6443"},
+			{Name: "prod", Cluster: "https://prod.k8s.local:6443"},
 		},
 		Infra: config.Infrastructure{Namespaces: true},
 	}
@@ -291,7 +291,7 @@ func TestIntegration_MultiCluster_MixedTopology(t *testing.T) {
 		Output:     config.Output{URL: "https://github.com/test/mixed.git"},
 		Environments: []config.Environment{
 			{Name: "dev"}, // Local cluster (in-cluster)
-			{Name: "prod", ClusterURL: "https://prod.k8s.local:6443"}, // Remote
+			{Name: "prod", Cluster: "https://prod.k8s.local:6443"}, // Remote
 		},
 		Infra: config.Infrastructure{Namespaces: true, RBAC: true},
 	}

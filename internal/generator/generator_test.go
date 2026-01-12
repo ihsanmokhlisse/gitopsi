@@ -2885,7 +2885,7 @@ func TestGetArgoCDNamespace_AllPlatforms(t *testing.T) {
 		t.Run(tt.platform+"_"+tt.namespace, func(t *testing.T) {
 			cfg := &config.Config{
 				Platform: tt.platform,
-				Bootstrap: config.Bootstrap{
+				Bootstrap: config.BootstrapConfig{
 					Namespace: tt.namespace,
 				},
 			}
@@ -3717,7 +3717,7 @@ func TestEdgeCase_MultiClusterURLFormats(t *testing.T) {
 				GitOpsTool: "argocd",
 				Git:        config.GitConfig{URL: testGitURL},
 				Environments: []config.Environment{
-					{Name: "dev", ClusterURL: tc.clusterURL},
+					{Name: "dev", Cluster: tc.clusterURL},
 				},
 				Infra: config.Infrastructure{
 					Namespaces: true,
